@@ -30,7 +30,7 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use serde_json::{Value, json};
 
-use crate::app::{App, ChatSettings};
+use crate::app::{App, ChatImage, ChatSettings};
 use crate::board::{AgentInfo, CardRuns, ChatRuns, ImproveRuns, StartError, Variant};
 use crate::config::{AgentConfig, AgentSet, HarnessKind};
 use crate::harness::remote::Runners;
@@ -131,6 +131,7 @@ impl ClaudeCode {
             run,
             card,
             prompt,
+            images,
         } = launching;
         self.launch(
             app,
@@ -138,7 +139,7 @@ impl ClaudeCode {
             config,
             run,
             (&process::new_session(), false),
-            prompt,
+            (prompt, images),
         )
     }
 
@@ -210,7 +211,7 @@ impl CardRuns for ClaudeCode {
         let Some(live) = lock(&self.live).get(&run_id).cloned() else {
             return false;
         };
-        send(&live.stdin, &user_message(&live.session, message))
+        send(&live.stdin, &user_message(&live.session, message, &[]))
     }
 
     /// Kills the run's Claude Code; the run ends as `stopped`.
@@ -294,6 +295,7 @@ impl ChatRuns for ClaudeCode {
         agent: &str,
         place: (Option<&Repository>, bool),
         message: Option<&str>,
+        images: &[ChatImage],
         prompt: Option<&str>,
         origin: &str,
         settings: &ChatSettings,
@@ -304,7 +306,7 @@ impl ChatRuns for ClaudeCode {
             &self.router,
             (agent, &config),
             place,
-            message,
+            (message, images),
             origin,
             settings,
         )?;
@@ -316,6 +318,7 @@ impl ChatRuns for ClaudeCode {
                     run,
                     card: None,
                     prompt,
+                    images,
                 },
             )
         })
@@ -352,7 +355,7 @@ impl ChatRuns for ClaudeCode {
             &config,
             live.run.clone(),
             (&live.session, true),
-            None,
+            (None, &[]),
         );
         if let Err(e) = resumed {
             let why = format!("cannot start the chat's claude again with its new model: {e}");
@@ -362,11 +365,15 @@ impl ChatRuns for ClaudeCode {
         Ok(())
     }
 
-    fn say(&self, run_id: i64, message: &str) -> bool {
+    fn say(&self, run_id: i64, message: &str, images: &[ChatImage]) -> bool {
         let Some(live) = self.live_chat(run_id) else {
             return false;
         };
-        tell(&live, message)
+        tell(&live, message, images)
+    }
+
+    fn takes_images(&self, model: &str) -> bool {
+        self.router.takes_images(model)
     }
 
     /// Ends a chat: its stdin is closed, so Claude Code exits once it has answered, and the chat ends then.
@@ -385,21 +392,36 @@ impl ChatRuns for ClaudeCode {
     }
 }
 
-/// Gives a chat's agent the person's message, after saying so with `agent_start`, so that the chat reads as working
-/// until its answer.
-fn tell(live: &Live, message: &str) -> bool {
+/// Gives a chat's agent the person's message and the `images` attached to it, after saying so with `agent_start`, so
+/// that the chat reads as working until its answer.
+fn tell(live: &Live, message: &str, images: &[ChatImage]) -> bool {
     if lock(&live.stdin).is_none() {
         return false;
     }
     keep(&live.app, live.run.id, live.chat, "agent_start", &json!({}));
-    send(&live.stdin, &user_message(&live.session, message))
+    send(&live.stdin, &user_message(&live.session, message, images))
 }
 
-/// A user message as Claude Code's `stream-json` input takes it.
-fn user_message(session: &str, text: &str) -> Value {
+/// A user message as Claude Code's `stream-json` input takes it: the words, and after them each picture the person
+/// attached, in the shape the Anthropic API gives an image of a message.
+fn user_message(session: &str, text: &str, images: &[ChatImage]) -> Value {
+    let mut content = Vec::new();
+    if !text.is_empty() {
+        content.push(json!({ "type": "text", "text": text }));
+    }
+    for image in images {
+        content.push(json!({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": image.media_type,
+                "data": image.base64(),
+            },
+        }));
+    }
     json!({
         "type": "user",
-        "message": { "role": "user", "content": [{ "type": "text", "text": text }] },
+        "message": { "role": "user", "content": content },
         "parent_tool_use_id": null,
         "session_id": session,
     })

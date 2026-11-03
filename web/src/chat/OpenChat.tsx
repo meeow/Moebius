@@ -27,6 +27,7 @@ import { Button } from "../ui/components/Button";
 import { Tooltip } from "../ui/components/Tooltip";
 import { Composer } from "./Composer";
 import { isOpen, isWorking, statusTag } from "./format";
+import { type HeldPicture, holdPictures, imageBodies, takesImages } from "./pictures";
 import { offeredChange, placeName } from "./places";
 import { seqToMark } from "./readMarkers";
 import { ThreadView } from "./ThreadView";
@@ -207,6 +208,7 @@ export function OpenChat({
   const thread = useThread(id);
   const choices = useChoices();
   const [message, setMessage] = useState("");
+  const [pictures, setPictures] = useState<HeldPicture[]>([]);
   const [sent, setSent] = useState(0);
   const [sending, setSending] = useState(false);
   const marked = useRef(0);
@@ -255,14 +257,17 @@ export function OpenChat({
     setSending(true);
     onNotice(null);
     setSent((n) => n + 1);
+    const held = imageBodies(pictures);
     try {
       if (open) {
-        await say(chat.id, text);
+        await say(chat.id, text, undefined, held);
         setMessage("");
+        setPictures([]);
       } else {
         // Writing to an ended chat goes on in a new chat that is told this one.
-        const run = await continueChat(chat.id, text);
+        const run = await continueChat(chat.id, text, held);
         setMessage("");
+        setPictures([]);
         await queryClient.invalidateQueries({ queryKey: keys.chats });
         void navigate(`/chat/${run.id}`);
       }
@@ -270,6 +275,13 @@ export function OpenChat({
       onNotice(e instanceof Error ? e.message : "cannot send the message");
     }
     setSending(false);
+  }
+
+  /** Holds the pictures the person pasted, dropped or picked, and says what it had to leave out. */
+  async function hold(files: File[]) {
+    const taken = await holdPictures(files, pictures.length);
+    if (taken.held.length > 0) setPictures((held) => [...held, ...taken.held]);
+    if (taken.refused.length > 0) onNotice(taken.refused[0] ?? null);
   }
 
   async function change(settings: { model?: string; thinking?: string }) {
@@ -285,6 +297,9 @@ export function OpenChat({
 
   const agent = choices.agents.find((each) => each.name === chat.agent);
   const model = chat.model ?? (agent?.model || null);
+  // A chat takes pictures only on a model that looks at them; one whose model the server does not list is left to
+  // the server, which asks the harness rather than refusing here.
+  const looks = takesImages(choices.available, chat.model, agent?.model ?? null);
   const thinking = chat.thinking ?? agent?.thinking ?? null;
   const waiting = chat.status === "waiting";
   const place = placeName(snapshot, chat);
@@ -298,11 +313,13 @@ export function OpenChat({
   }));
   const hint = notice
     ? notice
-    : working
-      ? "The agent is working. Your message is queued and sent when it is done with this turn."
-      : open
-        ? "The agent answers at once."
-        : "This chat has ended. What you send starts a new chat with the same agent, which is told this one.";
+    : looks === false
+      ? "This chat's model answers in words only, so it cannot look at a picture. Choose one that does, under Model."
+      : working
+        ? "The agent is working. Your message is queued and sent when it is done with this turn."
+        : open
+          ? "The agent answers at once."
+          : "This chat has ended. What you send starts a new chat with the same agent, which is told this one.";
 
   return (
     <>
@@ -327,6 +344,13 @@ export function OpenChat({
         onSend={() => void send()}
         canSend={message.trim() !== "" && !sending}
         running={working}
+        pictures={looks === false ? [] : pictures}
+        onHold={looks === false ? undefined : (files) => void hold(files)}
+        onUnhold={
+          looks === false
+            ? undefined
+            : (picture) => setPictures((held) => held.filter((each) => each.key !== picture.key))
+        }
         pills={
           <>
             <Tag>{chat.agent}</Tag>

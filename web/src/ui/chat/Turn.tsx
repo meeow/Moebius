@@ -258,12 +258,42 @@ export function Turn({ turn, unfolded, onToggle }: TurnProps) {
           className={cn("rounded-none border-0 bg-card", turn.blocks.length > 0 && "border-b")}
           headerRight={<CopyButton text={head.message} label="Copy your message" />}
           renderMarkdown={({ content }) => (
-            <p
-              className="whitespace-pre-wrap break-words px-double pb-plusfifty text-sm font-semibold text-high"
-              data-testid="person-message"
-            >
-              {content}
-            </p>
+            <>
+              <p
+                className={cn(
+                  "whitespace-pre-wrap break-words px-double text-sm font-semibold text-high",
+                  head.pictures.length === 0 && "pb-plusfifty",
+                )}
+                data-testid="person-message"
+              >
+                {content}
+              </p>
+              {/* The pictures the message was written with, in a row under it; each opens on its own. */}
+              {head.pictures.length > 0 && (
+                <ul
+                  aria-label="Pictures with the message"
+                  className="flex flex-wrap gap-half px-double pb-plusfifty"
+                >
+                  {head.pictures.map((picture) => (
+                    <li key={picture.key}>
+                      <a
+                        href={picture.src}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={`${picture.name ?? "A picture"} (${picture.mediaType})`}
+                      >
+                        {/* The bytes are served as they were sent, so the picture is seen as it was pasted. */}
+                        <img
+                          src={picture.src}
+                          alt={picture.name ?? "A picture sent with the message"}
+                          className="max-h-40 rounded-md border border-line object-contain"
+                        />
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
           )}
         />
       )}

@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::app::{App, ChatSettings};
+use crate::app::{App, ChatImage, ChatSettings};
 use crate::config::{AgentConfig, HarnessKind};
 use crate::router::Protocol;
 use crate::store::{Card, Repository, Run};
@@ -158,6 +158,7 @@ pub trait ChatRuns: Send + Sync {
         agent: &str,
         place: (Option<&Repository>, bool),
         message: Option<&str>,
+        images: &[ChatImage],
         prompt: Option<&str>,
         origin: &str,
         settings: &ChatSettings,
@@ -167,9 +168,14 @@ pub trait ChatRuns: Send + Sync {
     /// event holds: its agent answers the next message with them.
     fn change_chat(&self, app: &Arc<App>, run_id: i64) -> Result<(), String>;
 
-    /// Sends a person's message to a chat's agent; it answers when it is done with what it is doing. False when the
-    /// chat is not running.
-    fn say(&self, run_id: i64, message: &str) -> bool;
+    /// Sends a person's message, and the `images` attached to it, to a chat's agent; it answers when it is done with
+    /// what it is doing. False when the chat is not running.
+    fn say(&self, run_id: i64, message: &str, images: &[ChatImage]) -> bool;
+
+    /// Whether the model or class `model` takes images along with its text, as the router the chats are served by
+    /// says. A class takes them only when every model it lists does, since a chat cannot say beforehand which of
+    /// them answers.
+    fn takes_images(&self, model: &str) -> bool;
 
     /// Ends a chat: its agent is shut down and its work kept. False when the chat is not running.
     fn end(&self, run_id: i64) -> bool;

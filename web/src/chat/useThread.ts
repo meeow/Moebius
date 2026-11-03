@@ -63,7 +63,7 @@ export function useThread(id: number | null): Thread {
       return;
     }
     if (conversation.current?.id !== id) {
-      conversation.current = { id, value: new Conversation(), loaded: false };
+      conversation.current = { id, value: new Conversation(id), loaded: false };
       setThread(EMPTY);
     }
     if (connection === "reconnecting") return;

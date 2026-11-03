@@ -9,6 +9,8 @@ interface ChatBoxBaseProps {
   error?: string | null;
   /** The pills on the left of the footer. */
   pills?: ReactNode;
+  /** The pictures held with the message, in a row above the field. */
+  pictures?: ReactNode;
   /** The buttons on the right of the footer. */
   footerRight: ReactNode;
   /** Whether the agent works (the line around the box lights up). */
@@ -21,6 +23,7 @@ export function ChatBoxBase({
   editor,
   error,
   pills,
+  pictures,
   footerRight,
   isRunning,
   className,
@@ -40,6 +43,7 @@ export function ChatBoxBase({
         </div>
       )}
       <div className="flex flex-col gap-plusfifty px-plusfifty py-base">
+        {pictures}
         {editor}
         <div className="flex flex-wrap items-end justify-between gap-base">
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-half">{pills}</div>

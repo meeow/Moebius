@@ -49,7 +49,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use crate::app::{App, ChatSettings};
+use crate::app::{App, ChatImage, ChatSettings};
 use crate::board::{AgentInfo, CardRuns, ChatRuns, ImproveRuns, StartError, Variant};
 use crate::config::{AgentConfig, AgentSet};
 use crate::harness::remote::Runners;
@@ -210,8 +210,9 @@ impl PiBolt {
             run,
             card,
             prompt,
+            images,
         } = launching;
-        self.launch(app, card, config, run, prompt)
+        self.launch(app, card, config, run, (prompt, images))
     }
 }
 
@@ -353,11 +354,19 @@ impl ChatRuns for PiBolt {
         agent: &str,
         place: (Option<&Repository>, bool),
         message: Option<&str>,
+        images: &[ChatImage],
         prompt: Option<&str>,
         origin: &str,
         settings: &ChatSettings,
     ) -> Result<Run, StartError> {
-        self.open_chat(app, agent, place, (message, prompt), origin, settings)
+        self.open_chat(
+            app,
+            agent,
+            place,
+            (message, images, prompt),
+            origin,
+            settings,
+        )
     }
 
     fn change_chat(&self, app: &Arc<App>, run_id: i64) -> Result<(), String> {
@@ -372,8 +381,12 @@ impl ChatRuns for PiBolt {
         self.take_back_from_tui(app, run_id)
     }
 
-    fn say(&self, run_id: i64, message: &str) -> bool {
-        self.tell_chat(run_id, message)
+    fn say(&self, run_id: i64, message: &str, images: &[ChatImage]) -> bool {
+        self.tell_chat(run_id, message, images)
+    }
+
+    fn takes_images(&self, model: &str) -> bool {
+        self.router.takes_images(model)
     }
 
     fn end(&self, run_id: i64) -> bool {

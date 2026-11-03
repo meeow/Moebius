@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use super::reader::Reader;
 use super::{ClaudeCode, Live, lock, send, user_message};
-use crate::app::App;
+use crate::app::{App, ChatImage};
 use crate::bus::Event;
 use crate::config::AgentConfig;
 use crate::harness::mcp;
@@ -128,7 +128,8 @@ impl ClaudeCode {
     }
 
     /// Starts Claude Code for a run whose worktree and token exist, on the session `session` (resumed when the flag
-    /// is set), and the thread that reads it. It is given `prompt`; without one, a chat waits for the person's message.
+    /// is set), and the thread that reads it. It is given the `prompt` to answer and the `images` sent with it;
+    /// without a prompt, a chat waits for the person's message.
     pub(super) fn launch(
         &self,
         app: &Arc<App>,
@@ -136,7 +137,7 @@ impl ClaudeCode {
         agent: &AgentConfig,
         run: RunningRun,
         (session, resumes): (&str, bool),
-        prompt: Option<&str>,
+        (prompt, images): (Option<&str>, &[ChatImage]),
     ) -> Result<(), String> {
         app.store
             .set_run_worktree(run.id, &run.worktree.to_string_lossy())
@@ -221,7 +222,7 @@ impl ClaudeCode {
                     card: card.map(|card| card.id),
                 });
                 keep(app, run.id, chat, "agent_start", &json!({}));
-                send(&live.stdin, &user_message(session, prompt));
+                send(&live.stdin, &user_message(session, prompt, images));
             }
             None => app
                 .store
