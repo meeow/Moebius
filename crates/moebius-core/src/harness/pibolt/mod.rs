@@ -52,7 +52,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use crate::app::{App, ChatSettings};
+use crate::app::{App, ChatImage, ChatSettings};
 use crate::board::{AgentInfo, CardRuns, ChatRuns, ImproveRuns, StartError, Variant};
 use crate::config::{AgentConfig, AgentSet};
 use crate::harness::launch::{Launched, Launcher};
@@ -236,8 +236,9 @@ impl PiBolt {
             run,
             card,
             prompt,
+            images,
         } = launching;
-        self.launch(app, card, config, run, prompt)
+        self.launch(app, card, config, run, (prompt, images))
     }
 }
 
@@ -380,11 +381,19 @@ impl ChatRuns for PiBolt {
         agent: &str,
         place: (Option<&Repository>, bool),
         message: Option<&str>,
+        images: &[ChatImage],
         prompt: Option<&str>,
         origin: &str,
         settings: &ChatSettings,
     ) -> Result<Run, StartError> {
-        self.open_chat(app, agent, place, (message, prompt), origin, settings)
+        self.open_chat(
+            app,
+            agent,
+            place,
+            (message, images, prompt),
+            origin,
+            settings,
+        )
     }
 
     fn change_chat(&self, app: &Arc<App>, run_id: i64) -> Result<(), String> {
@@ -399,18 +408,28 @@ impl ChatRuns for PiBolt {
         self.take_back_from_tui(app, run_id)
     }
 
-    fn say(&self, run_id: i64, message: &str) -> bool {
-        self.tell_chat(run_id, message)
+    fn say(&self, run_id: i64, message: &str, images: &[ChatImage]) -> bool {
+        self.tell_chat(run_id, message, images)
+    }
+
+    fn takes_images(&self, model: &str) -> bool {
+        self.router.takes_images(model)
     }
 
     /// The chat's worktree and token are made again, and a Pi is started with what was said before, so that the chat
     /// carries on without being a new one.
-    fn wake(&self, app: &Arc<App>, run_id: i64, prompt: &str) -> Result<(), String> {
+    fn wake(
+        &self,
+        app: &Arc<App>,
+        run_id: i64,
+        prompt: &str,
+        images: &[ChatImage],
+    ) -> Result<(), String> {
         let stored = app.run(run_id).map_err(|e| e.to_string())?;
         let config = self.chat_config(app, run_id, &stored.agent)?;
         let running = woken_chat(app, &self.router, &stored, &config)?;
         launch_or_undo(app, &self.router, running, |run| {
-            self.launch(app, None, &config, run, Some(prompt))
+            self.launch(app, None, &config, run, (Some(prompt), images))
         })
         .map(|_| ())
         .map_err(|e| e.to_string())

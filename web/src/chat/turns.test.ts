@@ -33,6 +33,7 @@ const person = (message: string): Entry => ({
   kind: "person",
   said: "said",
   message,
+  pictures: [],
 });
 const thinking = (value: string): Entry => ({
   at: 0,

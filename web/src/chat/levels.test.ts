@@ -17,6 +17,7 @@ const listed = available({
       id: "one",
       protocol: "openai",
       upstream: "u",
+      images: true,
       levels: ["none", "minimal", "low", "medium", "xhigh"],
       thinking_levels: ["off", "minimal", "low", "medium", "xhigh"],
       thinking: { off: "none", high: "xhigh", max: "xhigh" },
@@ -48,6 +49,7 @@ describe("levelChoices", () => {
           id: "one",
           protocol: "openai",
           upstream: "u",
+          images: true,
           levels: ["low", "medium"],
           thinking_levels: ["low", "medium", "max"],
           thinking: { max: "medium", high: "medium" },
@@ -65,7 +67,7 @@ describe("levelChoices", () => {
 
   it("offers every level for a model class", () => {
     const withClass = available({
-      classes: [{ name: "strong", models: ["one"], protocols: ["openai"] }],
+      classes: [{ name: "strong", models: ["one"], protocols: ["openai"], images: true }],
       models: listed.models,
     });
     expect(levelChoices(withClass, "strong", "")).toHaveLength(7);

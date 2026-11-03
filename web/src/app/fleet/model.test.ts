@@ -165,6 +165,7 @@ describe("how a tile tells its run", () => {
       kind: "person",
       said: "said",
       message: "m",
+      pictures: [],
     });
     // Everything is held: the first message is where the work began.
     expect(workStartedAt([person(300), person(400)], false, 100)).toBe(300);

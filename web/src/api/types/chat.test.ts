@@ -18,10 +18,10 @@ const available = (over: Partial<AvailableModels>): AvailableModels => ({
 describe("listedModel", () => {
   const listed = available({
     models: [
-      { id: "one", protocol: "openai", upstream: "u", levels: ["low", "xhigh"] },
-      { id: "two", protocol: "openai", upstream: "u" },
+      { id: "one", protocol: "openai", upstream: "u", images: true, levels: ["low", "xhigh"] },
+      { id: "two", protocol: "openai", upstream: "u", images: false },
     ],
-    classes: [{ name: "strong", models: ["one", "two"], protocols: ["openai"] }],
+    classes: [{ name: "strong", models: ["one", "two"], protocols: ["openai"], images: true }],
   });
 
   it("finds the model by its id", () => {
@@ -41,7 +41,7 @@ describe("listedModel", () => {
 describe("offeredLevels", () => {
   it("keeps every level of a model that does not say", () => {
     expect(offeredLevels(undefined)).toEqual([...THINKING_LEVELS]);
-    expect(offeredLevels({ id: "a", protocol: "openai", upstream: "u" })).toEqual([
+    expect(offeredLevels({ id: "a", protocol: "openai", upstream: "u", images: true })).toEqual([
       ...THINKING_LEVELS,
     ]);
   });
@@ -51,6 +51,7 @@ describe("offeredLevels", () => {
       id: "a",
       protocol: "openai",
       upstream: "u",
+      images: true,
       thinking_levels: ["off", "medium", "max"],
     };
     expect(offeredLevels(model)).toEqual(["off", "medium", "max"]);
@@ -62,6 +63,7 @@ describe("sentLevel", () => {
     id: "a",
     protocol: "openai",
     upstream: "u",
+    images: true,
     thinking: { off: "none", high: "xhigh", max: "xhigh" },
   };
 

@@ -231,7 +231,7 @@ export function useThread(id: number | null): Thread {
     if (conversation.current?.id !== id) {
       conversation.current = {
         id,
-        value: new Conversation(),
+        value: new Conversation(id),
         loaded: false,
         older: false,
         reading: false,

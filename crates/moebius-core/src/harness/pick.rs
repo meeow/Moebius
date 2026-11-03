@@ -8,7 +8,7 @@ use std::path::Path;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
-use crate::app::{App, ChatSettings};
+use crate::app::{App, ChatImage, ChatSettings};
 use crate::board::{AgentInfo, CardRuns, ChatRuns, ImproveRuns, Runs, StartError, Variant};
 use crate::config::{AgentConfig, AgentSet, HarnessKind};
 use crate::harness::claude::ClaudeCode;
@@ -144,12 +144,13 @@ impl ChatRuns for Harnesses {
         agent: &str,
         place: (Option<&Repository>, bool),
         message: Option<&str>,
+        images: &[ChatImage],
         prompt: Option<&str>,
         origin: &str,
         settings: &ChatSettings,
     ) -> Result<Run, StartError> {
         self.of_agent(app, agent)
-            .start_chat(app, agent, place, message, prompt, origin, settings)
+            .start_chat(app, agent, place, message, images, prompt, origin, settings)
     }
 
     fn change_chat(&self, app: &Arc<App>, run_id: i64) -> Result<(), String> {
@@ -157,12 +158,23 @@ impl ChatRuns for Harnesses {
     }
 
     // A run belongs to exactly one harness; the other does not know the chat and says no.
-    fn say(&self, run_id: i64, message: &str) -> bool {
-        self.claude_code.say(run_id, message) || self.pi_bolt.say(run_id, message)
+    fn say(&self, run_id: i64, message: &str, images: &[ChatImage]) -> bool {
+        self.claude_code.say(run_id, message, images) || self.pi_bolt.say(run_id, message, images)
     }
 
-    fn wake(&self, app: &Arc<App>, run_id: i64, prompt: &str) -> Result<(), String> {
-        self.of_run(app, run_id).wake(app, run_id, prompt)
+    /// Both harnesses answer from the same router, so either says what it knows of the model.
+    fn takes_images(&self, model: &str) -> bool {
+        self.pi_bolt.takes_images(model)
+    }
+
+    fn wake(
+        &self,
+        app: &Arc<App>,
+        run_id: i64,
+        prompt: &str,
+        images: &[ChatImage],
+    ) -> Result<(), String> {
+        self.of_run(app, run_id).wake(app, run_id, prompt, images)
     }
 
     fn end(&self, run_id: i64) -> bool {

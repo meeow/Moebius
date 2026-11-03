@@ -3,7 +3,8 @@
 //! reasoning level names of each model: the names its endpoint says it takes, or the ones `[router.model_thinking]`
 //! gives it when it does not say. A run's `models.json` is given the name to send for every level whose own name the
 //! endpoint does not take, so that its harness can ask for a level the endpoint would not take: `xhigh` of an endpoint
-//! whose hardest level is named so, or the hardest an endpoint has when it has no name for a level at all.
+//! whose hardest level is named so, or the hardest an endpoint has when it has no name for a level at all. It
+//! also says which models take pictures along with their text, which is what a chat message can carry.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -41,6 +42,8 @@ pub struct AvailableModel {
     /// `[router.model_thinking]` gives, or else what its listed `levels` give. Filled in as the answer is given.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub thinking: BTreeMap<String, String>,
+    /// Whether a chat running on this model can hand a picture to it along with its text.
+    pub images: bool,
 }
 
 /// A model an upstream listed, with the reasoning level names its endpoint takes.
@@ -64,6 +67,8 @@ pub struct AvailableClass {
     pub models: Vec<String>,
     /// The protocols the upstreams list any of its models under.
     pub protocols: Vec<Protocol>,
+    /// Whether every model it lists takes images, which is what a chat that names the class needs.
+    pub images: bool,
 }
 
 /// The models of all upstreams, sorted by protocol and then id, the upstreams that could not be asked, and the model
@@ -184,8 +189,9 @@ impl Router {
         answer.classes = self
             .classes()
             .into_iter()
-            .map(|(name, models)| {
-                let models: Vec<String> = models.into_iter().map(|m| m.model).collect();
+            .map(|(name, listed)| {
+                let images = listed.iter().all(|model| model_takes_images(&model.model));
+                let models: Vec<String> = listed.into_iter().map(|m| m.model).collect();
                 let mut protocols = Vec::new();
                 for listed in answer.models.iter().filter(|m| models.contains(&m.id)) {
                     if !protocols.contains(&listed.protocol) {
@@ -196,6 +202,7 @@ impl Router {
                     name,
                     models,
                     protocols,
+                    images,
                 }
             })
             .collect();
@@ -244,6 +251,7 @@ impl Router {
                     answer
                         .models
                         .extend(listed.into_iter().map(|m| AvailableModel {
+                            images: model_takes_images(&m.id),
                             id: m.id,
                             levels: m.levels,
                             thinking_levels: Vec::new(),
@@ -377,6 +385,177 @@ impl Router {
                 Some(Listed { id, levels })
             })
             .collect())
+    }
+
+    /// Whether `model`, a model or a class, takes images along with its text. A class takes them only when every
+    /// model it lists does, because a chat cannot say beforehand which of them answers.
+    pub fn takes_images(&self, model: &str) -> bool {
+        match self.classes().get(model) {
+            Some(models) => models.iter().all(|model| model_takes_images(&model.model)),
+            None => model_takes_images(model),
+        }
+    }
+}
+
+/// Whether the model named `model` takes images along with its text.
+///
+/// Upstream model listings do not say, so the families that do are known by name: Claude from 3 on, Gemini and
+/// Gemma from 3 on, GPT-4o and every OpenAI chat model after it, the OpenAI o-series, Grok 4, Llama 4, Pixtral,
+/// GLM models ending in `v`, and any model whose own name calls it a vision model (`vl`, `vision`, `omni`).
+/// A model none of these covers is taken as text only, which is what a chat that is handed an image is told.
+pub fn model_takes_images(model: &str) -> bool {
+    // What an upstream serves is often qualified ("anthropic/claude-sonnet-4-5"); the family is the last part.
+    let name = model.rsplit('/').next().unwrap_or(model).to_lowercase();
+    // A model that listens, speaks, embeds or draws does not read a picture along with a question.
+    if [
+        "embedding",
+        "audio",
+        "tts",
+        "whisper",
+        "transcribe",
+        "dall",
+        "imagen",
+        "veo",
+        "sora",
+    ]
+    .iter()
+    .any(|skip| name.contains(skip))
+    {
+        return false;
+    }
+    if [
+        "vision", "omni", "pixtral", "internvl", "cogvlm", "-vl", "_vl",
+    ]
+    .iter()
+    .any(|mark| name.contains(mark))
+    {
+        return true;
+    }
+    if name.starts_with("claude") {
+        // Claude takes images from 3 on; the first two and the instant variant answer in words alone.
+        return !name.contains("claude-1")
+            && !name.contains("claude-2")
+            && !name.contains("instant");
+    }
+    if [
+        "gemini", "gemma-3", "gemma-4", "llama-4", "llama4", "grok-4",
+    ]
+    .iter()
+    .any(|family| name.starts_with(family))
+    {
+        return true;
+    }
+    // GPT-4o onward and ChatGPT's own models take images; gpt-4, gpt-oss and the image makers do not.
+    if ["gpt-4o", "gpt-4.1", "gpt-4.5", "gpt-5", "gpt-6", "chatgpt"]
+        .iter()
+        .any(|family| name.starts_with(family))
+    {
+        return true;
+    }
+    // The o-series: o1 and every numbered model after it, with or without a suffix, but not a name that merely
+    // starts with an o.
+    if name.len() > 1 && name.starts_with('o') && name.as_bytes()[1].is_ascii_digit() {
+        return true;
+    }
+    name.starts_with("glm-4") && name.ends_with('v')
+}
+
+#[cfg(test)]
+mod vision_tests {
+    use std::sync::Arc;
+
+    use serde_json::json;
+
+    use super::*;
+    use crate::store::Store;
+
+    #[test]
+    fn the_vision_families_take_images() {
+        for model in [
+            "claude-haiku-4-5",
+            "anthropic/claude-sonnet-4-5",
+            "claude-3-5-sonnet-20241022",
+            "gemini-3.1-pro-preview",
+            "google/gemini-3.1-pro-preview",
+            "gpt-4o",
+            "gpt-4.1-mini",
+            "gpt-5.6-sol",
+            "chatgpt-codex-connector",
+            "o4-mini",
+            "gpt-4-vision-preview",
+            "grok-4",
+            "llama-4-maverick",
+            "pixtral-large-latest",
+            "qwen3-vl-235b-a22b-instruct",
+            "moonshotai/kimi-k2.5-vision",
+            "zhipuai/glm-4.6v",
+            "gemma-3-27b-it",
+            "mistralai/mistral-small-3.2-24b-instruct-vision",
+        ] {
+            assert!(model_takes_images(model), "{model} takes images");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_answer_says_which_models_take_pictures() {
+        // An OpenAI upstream that lists one model the router knows how to draw with and one it does not.
+        let answers = json!({ "data": [{ "id": "gpt-4o" }, { "id": "deepseek-chat" }] });
+        let app = axum::Router::new().route(
+            "/v1/models",
+            axum::routing::get(move || {
+                let answers = answers.clone();
+                async move { axum::Json(answers) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        let dir = tempfile::tempdir().unwrap();
+        let router = Router::new(
+            Arc::new(Store::in_memory(dir.path()).unwrap()),
+            vec![Upstream {
+                protocol: Protocol::OpenAi,
+                base_url: base,
+                api_key: None,
+                oauth: None,
+            }],
+        );
+        let listed = router.available_models(true).await;
+        let pictures: Vec<(String, bool)> = listed
+            .models
+            .iter()
+            .map(|model| (model.id.clone(), model.images))
+            .collect();
+        assert_eq!(
+            pictures,
+            vec![
+                ("deepseek-chat".to_string(), false),
+                ("gpt-4o".to_string(), true),
+            ]
+        );
+    }
+
+    #[test]
+    fn models_that_answer_in_words_alone_do_not() {
+        for model in [
+            "claude-2.1",
+            "claude-instant-1.2",
+            "gpt-4",
+            "gpt-3.5-turbo",
+            "gpt-oss-120b",
+            "gpt-image-1",
+            "text-embedding-3-large",
+            "grok-3",
+            "llama-3.3-70b-versatile",
+            "deepseek-chat",
+            "qwen3-32b",
+            "mistral-large-latest",
+            "kimi-k2-turbo-preview",
+            "gemma-2-27b-it",
+            "openchat-3.6-8b",
+        ] {
+            assert!(!model_takes_images(model), "{model} is text only");
+        }
     }
 }
 

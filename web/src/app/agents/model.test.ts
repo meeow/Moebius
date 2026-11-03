@@ -161,11 +161,11 @@ describe("an agent of moebius.toml", () => {
 
 describe("the choices of a Model field", () => {
   const available = {
-    models: [{ id: "m1", protocol: "openai", upstream: "http://u" }],
+    models: [{ id: "m1", protocol: "openai", upstream: "http://u", images: true }],
     errors: [],
     classes: [
-      { name: "strong", models: ["m1"], protocols: ["openai"] },
-      { name: "mixed", models: ["m1", "m2"], protocols: ["openai", "anthropic"] },
+      { name: "strong", models: ["m1"], protocols: ["openai"], images: true },
+      { name: "mixed", models: ["m1", "m2"], protocols: ["openai", "anthropic"], images: true },
     ],
     decision_models: [],
   };

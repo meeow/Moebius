@@ -283,12 +283,29 @@ export function Turn({ turn, unfolded, onToggle, compact = false }: TurnProps) {
           className="rounded-card"
           headerRight={<CopyButton text={head.message} label="Copy your message" />}
           renderMarkdown={({ content }) => (
-            <p
-              className="max-w-prose break-words whitespace-pre-wrap text-base leading-relaxed text-text"
-              data-testid="person-message"
-            >
-              {content}
-            </p>
+            <>
+              {head.pictures.length > 0 && (
+                <ul className="mb-2 flex flex-wrap gap-2" data-testid="person-pictures">
+                  {head.pictures.map((picture) => (
+                    <li key={picture.key}>
+                      <img
+                        src={picture.src}
+                        alt={picture.name ?? "A picture you sent with the message"}
+                        title={picture.name ?? undefined}
+                        loading="lazy"
+                        className="max-h-24 max-w-40 rounded-control border border-hairline bg-field object-contain"
+                      />
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p
+                className="max-w-prose break-words whitespace-pre-wrap text-base leading-relaxed text-text"
+                data-testid="person-message"
+              >
+                {content}
+              </p>
+            </>
           )}
         />
       )}

@@ -343,6 +343,7 @@ fn a_chat_that_ends_leaves_no_background_process_of_its_agent() {
             "Coder",
             (Some(&repository), false),
             Some("Hello"),
+            &[],
             Some("[child] Hello"),
             "chat",
             &ChatSettings::default(),
@@ -351,7 +352,9 @@ fn a_chat_that_ends_leaves_no_background_process_of_its_agent() {
     let child: u32 = written(&s.app, run.id, "child.txt").parse().unwrap();
     assert!(crate::platform::is_running(child));
     // The fake hangs on that message; the next one is answered, and the chat waits.
-    s.app.say_in_chat(&s.claude, run.id, "Next", None).unwrap();
+    s.app
+        .say_in_chat(&s.claude, run.id, "Next", &[], None)
+        .unwrap();
     wait_for_run(&s.app, run.id, "the agent answers", |run| {
         run.status == "waiting"
     });
@@ -381,6 +384,7 @@ fn a_launch_that_fails_after_claude_code_started_kills_it() {
         "Coder",
         (None, false),
         None,
+        &[],
         None,
         "chat",
         &ChatSettings::default(),
@@ -406,6 +410,7 @@ fn claude_code_does_not_start_while_a_launcher_is_configured() {
         "Coder",
         (None, false),
         None,
+        &[],
         None,
         "chat",
         &ChatSettings::default(),
@@ -425,6 +430,7 @@ fn a_chat_given_another_model_before_its_first_message_starts_a_session_instead_
             "Coder",
             (Some(&repository), false),
             None,
+            &[],
             None,
             "chat",
             &ChatSettings::default(),
@@ -462,7 +468,9 @@ fn a_chat_given_another_model_before_its_first_message_starts_a_session_instead_
     wait_for_run(&s.app, run.id, "the chat waits", |run| {
         run.status == "waiting"
     });
-    s.app.say_in_chat(&s.claude, run.id, "Hello", None).unwrap();
+    s.app
+        .say_in_chat(&s.claude, run.id, "Hello", &[], None)
+        .unwrap();
     let answered = |run: &Run| {
         run.status == "waiting"
             && s.app
@@ -524,6 +532,7 @@ fn a_chat_on_claude_code_waits_between_messages_resumes_its_session_for_another_
             "Coder",
             (Some(&repository), false),
             Some("Hello"),
+            &[],
             Some("Hello"),
             "chat",
             &ChatSettings::default(),
@@ -536,7 +545,7 @@ fn a_chat_on_claude_code_waits_between_messages_resumes_its_session_for_another_
     let session = first[first.iter().position(|a| a == "--session-id").unwrap() + 1].clone();
 
     s.app
-        .say_in_chat(&s.claude, run.id, "[write notes.txt] Again", None)
+        .say_in_chat(&s.claude, run.id, "[write notes.txt] Again", &[], None)
         .unwrap();
     let answered = |run: &Run| {
         run.status == "waiting"
@@ -573,7 +582,7 @@ fn a_chat_on_claude_code_waits_between_messages_resumes_its_session_for_another_
     s.app.end_chat(&s.claude, run.id).unwrap();
     let run = wait_until_ended(&s.app, run.id);
     assert_eq!(run.status, "succeeded");
-    assert!(!s.claude.say(run.id, "Hello?"));
+    assert!(!s.claude.say(run.id, "Hello?", &[]));
     // What it wrote is on the chat's branch.
     let clone = PathBuf::from(&repository.path);
     let shown = git(
@@ -594,6 +603,7 @@ fn a_chat_on_claude_code_whose_agent_went_away_is_taken_up_again_with_what_was_s
             "Coder",
             (Some(&repository), false),
             Some("Hello"),
+            &[],
             Some("Hello"),
             "chat",
             &ChatSettings::default(),
@@ -603,7 +613,7 @@ fn a_chat_on_claude_code_whose_agent_went_away_is_taken_up_again_with_what_was_s
         run.status == "waiting"
     });
     s.app
-        .say_in_chat(&s.claude, run.id, "[write notes.txt] Again", None)
+        .say_in_chat(&s.claude, run.id, "[write notes.txt] Again", &[], None)
         .unwrap();
     wait_for_run(&s.app, run.id, "the agent answers again", |run| {
         run.status == "waiting"
@@ -622,7 +632,7 @@ fn a_chat_on_claude_code_whose_agent_went_away_is_taken_up_again_with_what_was_s
 
     let again = s
         .app
-        .say_in_chat(&s.claude, run.id, "Carry on", None)
+        .say_in_chat(&s.claude, run.id, "Carry on", &[], None)
         .unwrap();
     assert_eq!(again.id, run.id, "the same chat");
     assert_eq!(again.ended_at, None);

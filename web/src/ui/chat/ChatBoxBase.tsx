@@ -14,6 +14,8 @@ interface ChatBoxBaseProps {
   error?: string | null;
   /** The choices on the left of the footer: the agent, the model, the reasoning level. */
   pills?: ReactNode;
+  /** The pictures held with the message, in a row above the field. */
+  pictures?: ReactNode;
   /** The buttons on the right of the footer. */
   footerRight: ReactNode;
   className?: string;
@@ -29,6 +31,7 @@ export function ChatBoxBase({
   editor,
   error,
   pills,
+  pictures,
   footerRight,
   className,
   inline = false,
@@ -42,6 +45,7 @@ export function ChatBoxBase({
       )}
     >
       {error && <Notice tone="error">{error}</Notice>}
+      {pictures}
       {editor}
       {inline ? (
         <div className="flex shrink-0 items-center gap-2">

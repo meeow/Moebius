@@ -12,7 +12,7 @@ import { ModelNote } from "./ModelField";
 afterEach(cleanup);
 
 const answered: AvailableModels = {
-  models: [{ id: "big", protocol: "openai", upstream: "https://api.one.example" }],
+  models: [{ id: "big", protocol: "openai", upstream: "https://api.one.example", images: true }],
   errors: [],
   classes: [],
   decision_models: [],

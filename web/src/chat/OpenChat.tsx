@@ -39,6 +39,7 @@ import { Composer } from "./Composer";
 import { draftKey, readDraft, saveDraft } from "./drafts";
 import { endedHint, isOpen, isWorking, statusTag, takesMessage } from "./format";
 import { levelChoices } from "./levels";
+import { type HeldPicture, holdPictures, imageBodies, takesImages } from "./pictures";
 import { offeredChange, placeName } from "./places";
 import { seqToMark } from "./readMarkers";
 import { Starters } from "./Starters";
@@ -291,6 +292,7 @@ export function OpenChat({
   const thread = useThread(id);
   const choices = useChoices();
   const [message, setMessage] = useState(() => readDraft(draftKey(id)));
+  const [pictures, setPictures] = useState<HeldPicture[]>([]);
   const [sent, setSent] = useState(0);
   const [sending, setSending] = useState(false);
   const marked = useRef(0);
@@ -375,17 +377,20 @@ export function OpenChat({
     setSending(true);
     onNotice(null);
     setSent((n) => n + 1);
+    const attached = imageBodies(pictures);
     try {
       if (writesHere) {
-        await say(chat.id, text);
+        await say(chat.id, text, undefined, attached);
         clear(text);
+        setPictures([]);
         // Taking a chat up again says something new in its tag and in the list of chats, so both are read again
         // instead of waiting for the events to say so.
         if (!open) await queryClient.invalidateQueries({ queryKey: keys.chats });
       } else {
         // A chat that ended for good goes on in a new chat that is told this one.
-        const run = await continueChat(chat.id, text);
+        const run = await continueChat(chat.id, text, attached);
         clear(text);
+        setPictures([]);
         await queryClient.invalidateQueries({ queryKey: keys.chats });
         void navigate(`/chat/${run.id}`);
       }
@@ -393,6 +398,13 @@ export function OpenChat({
       onNotice(e instanceof Error ? e.message : "Couldn't send the message. Try again.");
     }
     setSending(false);
+  }
+
+  /** Holds the pictures the person pasted, dropped or picked, and says what it had to leave out. */
+  async function hold(files: File[]) {
+    const taken = await holdPictures(files, pictures.length);
+    if (taken.held.length > 0) setPictures((held) => [...held, ...taken.held]);
+    if (taken.refused.length > 0) onNotice(taken.refused[0] ?? null);
   }
 
   async function change(settings: { model?: string; thinking?: string }) {
@@ -408,6 +420,9 @@ export function OpenChat({
 
   const agent = choices.agents.find((each) => each.name === chat.agent);
   const model = chat.model ?? (agent?.model || null);
+  // A chat takes pictures only on a model that looks at them; one whose model the server does not list is left to
+  // the server, which asks the harness rather than refusing here.
+  const looks = takesImages(choices.available, chat.model, agent?.model ?? null);
   const thinking = chat.thinking ?? agent?.thinking ?? null;
   const waiting = chat.status === "waiting";
   const place = placeName(snapshot, chat);
@@ -421,9 +436,11 @@ export function OpenChat({
   // writing to it is the ordinary thing the composer does.
   const hint = notice
     ? notice
-    : working
-      ? "The agent is working. Your message goes when it finishes this turn."
-      : null;
+    : looks === false
+      ? "This chat's model answers in words only, so it cannot look at a picture. Choose one that does, under Model."
+      : working
+        ? "The agent is working. Your message goes when it finishes this turn."
+        : null;
 
   return (
     <>
@@ -465,6 +482,13 @@ export function OpenChat({
         // worth reading there. A chat that takes no message has nobody to write to, so the field says why, and what
         // the button does about it.
         placeholder={writesHere ? `Write to ${chat.agent}` : endedHint(chat.status, chat.agent)}
+        pictures={looks === false ? [] : pictures}
+        onHold={looks === false ? undefined : (files) => void hold(files)}
+        onUnhold={
+          looks === false
+            ? undefined
+            : (picture) => setPictures((held) => held.filter((each) => each.key !== picture.key))
+        }
         pills={
           <>
             <Tag>{place ?? "no repository"}</Tag>

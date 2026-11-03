@@ -350,6 +350,7 @@ fn a_chat_given_another_model_is_asked_of_the_launcher_again() {
         "Coder",
         (None, false),
         None,
+        &[],
         None,
         "chat",
         &crate::app::ChatSettings::default(),
@@ -379,6 +380,7 @@ fn a_chat_taken_up_again_is_asked_of_the_launcher_again() {
         "Coder",
         (None, false),
         None,
+        &[],
         None,
         "chat",
         &crate::app::ChatSettings::default(),
@@ -391,7 +393,8 @@ fn a_chat_taken_up_again_is_asked_of_the_launcher_again() {
     assert_eq!(wait_until_ended(&app, chat.id).status, "stopped");
     assert_eq!(lock(&seen).len(), 1);
 
-    app.say_in_chat(&pi, chat.id, "Carry on", None).unwrap();
+    app.say_in_chat(&pi, chat.id, "Carry on", &[], None)
+        .unwrap();
     // The agent made again is wrapped like the first, never started bare.
     assert_eq!(lock(&seen).len(), 2);
     wait_for("the second Pi is wrapped", || {
@@ -446,6 +449,7 @@ fn a_chat_is_told_to_the_launcher_as_one_and_has_no_terminal_interface() {
         "Coder",
         (None, false),
         None,
+        &[],
         None,
         "chat",
         &crate::app::ChatSettings::default(),

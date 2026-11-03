@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 
-use crate::app::{App, ChatSettings};
+use crate::app::{App, ChatImage, ChatSettings};
 use crate::blobs::redact;
 use crate::board::StartError;
 use crate::config::{AgentConfig, HarnessKind};
@@ -264,14 +264,14 @@ pub(in crate::harness) fn head(
 
 /// Records a chat with `agent`, as `config` has it (on the harness it names), with `origin`, and makes its place: a
 /// worktree on `moebius/chat-<id>` of `repository`, of the harness configuration repository when `harness` is set, or
-/// an empty directory, and its token. The chat shows `message`, what the person said, and keeps the `settings` it was
-/// given in place of its agent's. The chat fails when that cannot be done.
+/// an empty directory, and its token. The chat shows the `message` the person said and the `images` they attached to
+/// it, and keeps the `settings` it was given in place of its agent's. The chat fails when that cannot be done.
 pub(in crate::harness) fn chat_run(
     app: &App,
     router: &Router,
     (agent, config): (&str, &AgentConfig),
     (repository, harness): (Option<&Repository>, bool),
-    message: Option<&str>,
+    (message, images): (Option<&str>, &[ChatImage]),
     origin: &str,
     settings: &ChatSettings,
 ) -> Result<RunningRun, StartError> {
@@ -332,7 +332,10 @@ pub(in crate::harness) fn chat_run(
         remote: None,
     };
     if let Some(message) = message {
-        let said = json!({ "message": redact(message) });
+        // A copy of every picture is kept under the chat, so the chat can show what was sent after its agent is
+        // gone; what the message keeps of them is their name and kind, not their bytes.
+        let described = app.store_chat_images(run.id, images);
+        let said = json!({ "message": redact(message), "images": described });
         let _ = app.record_run_event(run.id, "said", &said);
     }
     if settings != &ChatSettings::default() {

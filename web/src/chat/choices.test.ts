@@ -30,12 +30,12 @@ describe("modelChoices", () => {
     expect(
       modelChoices({
         models: [
-          { id: "b", protocol: "openai", upstream: "u" },
-          { id: "a", protocol: "openai", upstream: "u" },
-          { id: "a", protocol: "anthropic", upstream: "v" },
+          { id: "b", protocol: "openai", upstream: "u", images: false },
+          { id: "a", protocol: "openai", upstream: "u", images: true },
+          { id: "a", protocol: "anthropic", upstream: "v", images: true },
         ],
         errors: [],
-        classes: [{ name: "strong", models: ["a"], protocols: ["openai"] }],
+        classes: [{ name: "strong", models: ["a"], protocols: ["openai"], images: true }],
         decision_models: [],
       }),
     ).toEqual(["strong", "a", "b"]);

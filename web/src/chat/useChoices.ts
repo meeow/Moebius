@@ -26,16 +26,25 @@ export function modelChoices(available: AvailableModels | undefined): string[] {
 }
 
 export function useChoices() {
-  const agents = useQuery({ queryKey: keys.agents, queryFn: readAgents, staleTime: FIVE_MINUTES });
+  const agents = useQuery({
+    queryKey: keys.agents,
+    queryFn: readAgents,
+    staleTime: FIVE_MINUTES,
+  });
   const models = useQuery({
     queryKey: keys.models,
     queryFn: availableModels,
     staleTime: FIVE_MINUTES,
   });
-  const skills = useQuery({ queryKey: keys.skills, queryFn: readSkills, staleTime: FIVE_MINUTES });
+  const skills = useQuery({
+    queryKey: keys.skills,
+    queryFn: readSkills,
+    staleTime: FIVE_MINUTES,
+  });
   return {
     agents: chatAgents(agents.data ?? []),
     models: modelChoices(models.data),
+    /** What the router's upstreams serve, which says which of them look at pictures. */
     available: models.data,
     hasHarness: (skills.data?.length ?? 0) > 0,
     loaded: agents.isSuccess,

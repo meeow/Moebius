@@ -43,6 +43,40 @@ function fold(events: RunEvent[]): Conversation {
 }
 
 describe("Conversation", () => {
+  it("keeps the pictures a message was written with", () => {
+    const conversation = new Conversation(12);
+    conversation.push(
+      event(1, "said", {
+        message: "What is in this picture?",
+        images: [
+          { name: "screenshot.png", media_type: "image/jpeg", file: "9f2c.png" },
+          // The same bytes sent twice are kept under the same name, so they are shown once.
+          { name: "again.png", media_type: "image/jpeg", file: "9f2c.png" },
+          // A picture with no stored bytes has nothing to show.
+          { media_type: "image/png" },
+        ],
+      }),
+    );
+    const [entry] = conversation.entries();
+    expect(entry?.kind).toBe("person");
+    if (entry?.kind !== "person") return;
+    expect(entry.message).toBe("What is in this picture?");
+    // Each picture is read back from the chat's own directory, under the run the conversation is of.
+    expect(entry.pictures).toEqual([
+      {
+        key: "9f2c.png",
+        name: "screenshot.png",
+        mediaType: "image/jpeg",
+        src: "/v1/chats/12/images/9f2c.png",
+      },
+    ]);
+  });
+
+  it("holds no pictures for a message written in words alone", () => {
+    const [entry] = fold([event(1, "said", { message: "Summarise the branch." })]).entries();
+    expect(entry?.kind === "person" && entry.pictures).toEqual([]);
+  });
+
   it("joins the streamed pieces of an answer into one text", () => {
     const entries = fold([delta(1, "Review found "), delta(2, "a problem.")]).entries();
     expect(entries).toHaveLength(1);

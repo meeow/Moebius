@@ -50,6 +50,16 @@ export interface ToolCall {
 
 export type Said = "said" | "steered";
 
+/** A picture the person sent with their message. The server keeps its bytes and serves them again, so the picture is
+ * still there when the chat is read back. */
+export interface SaidPicture {
+  /** The name the server keeps the bytes under, which is the same picture twice in one message only once. */
+  key: string;
+  name: string | null;
+  mediaType: string;
+  src: string;
+}
+
 /** Where an error comes from: the model's provider (refused key, quota, an HTTP error), or Moebius, which ended the run. */
 export type ErrorSource = "model" | "run";
 
@@ -62,7 +72,7 @@ export type Entry = { at: number; seq: number } & (
   | { kind: "text"; text: string }
   | { kind: "thinking"; text: string }
   | { kind: "tool"; call: ToolCall }
-  | { kind: "person"; said: Said; message: string }
+  | { kind: "person"; said: Said; message: string; pictures: SaidPicture[] }
   | { kind: "error"; source: ErrorSource; message: string }
   | { kind: "mcpError"; server: string; message: string }
 );
@@ -72,6 +82,27 @@ type Json = Record<string, unknown>;
 const object = (value: unknown): Json =>
   typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Json) : {};
 const string = (value: unknown): string => (typeof value === "string" ? value : "");
+
+/** The pictures a `said` event carries. The server keeps each one under the chat's own directory and serves it from
+ * there, so the message is shown with the same picture it was written with. */
+export function pictureParts(raw: Json, runId: number): SaidPicture[] {
+  const list = Array.isArray(raw.images) ? (raw.images as unknown[]) : [];
+  const pictures: SaidPicture[] = [];
+  for (const value of list) {
+    const image = object(value);
+    // The server names each picture after its bytes, so the same picture sent twice is one picture shown.
+    const file = string(image.file).split("/").pop() ?? "";
+    if (file === "" || pictures.some((each) => each.key === file)) continue;
+    pictures.push({
+      key: file,
+      name: typeof image.name === "string" ? image.name : null,
+      mediaType: string(image.media_type) || "an image",
+      // The name holds no directory, so the address cannot be led out of the chat's own images.
+      src: `/v1/chats/${runId}/images/${file}`,
+    });
+  }
+  return pictures;
+}
 
 /** The input of a tool call from its arguments; Pi's tool names are lower case, Claude Code's are capitalised. */
 export function toolInput(tool: string, args: unknown): ToolInput {
@@ -230,6 +261,13 @@ export class Conversation {
   private oldest = 0;
   /** The error of the model that the turn showed already, so that `agent_end`, which repeats it, adds none. */
   private modelError: string | null = null;
+
+  /** The chat whose events are folded: its pictures are served from its own directory. */
+  private readonly run: number;
+
+  constructor(run = 0) {
+    this.run = run;
+  }
 
   /** The highest `seq` seen; 0 when none. */
   get lastSeq(): number {
@@ -486,6 +524,7 @@ export class Conversation {
           kind: "person",
           said: event.kind === "steered" ? "steered" : "said",
           message: string(data.message),
+          pictures: pictureParts(data, this.run),
         });
         this.close();
         break;

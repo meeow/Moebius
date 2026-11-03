@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 
 use super::reader::Reader;
 use super::{BRIDGE, LENS, Live, MOEBIUS_AGENT, PiBolt, kill_process, lock, run_dir, send};
-use crate::app::App;
+use crate::app::{App, ChatImage};
 use crate::bus::Event;
 use crate::config::AgentConfig;
 use crate::harness::launch::{Ask, Launched, Launcher, Unstarted, Wrapping};
@@ -116,7 +116,8 @@ impl PiBolt {
     /// has MCP servers, `mcp.json` with the MCP gateway, which is told the servers the run's token may use (without it
     /// Pi connects to none). Both hold the run's token, so only the server's user can read them. The model is marked as
     /// one that reasons when the agent has a reasoning level other than `off`, without which Pi would turn the level
-    /// off, and is given the level names of `[router.model_thinking]` when its endpoint takes any.
+    /// off, is given the level names of `[router.model_thinking]` when its endpoint takes any, and is marked as one
+    /// that takes pictures when the router says its family does, without which Pi would drop a pasted picture.
     pub(super) fn write_agent_dir(
         &self,
         agent_dir: PathBuf,
@@ -155,6 +156,10 @@ impl PiBolt {
         if let Some(levels) = self.router.thinking_map(&agent.model) {
             model["thinkingLevelMap"] = json!(levels);
         }
+        // Pi sends the pictures of a message only for a model it is told takes them.
+        if self.router.takes_images(&agent.model) {
+            model["input"] = json!(["text", "image"]);
+        }
         let models = json!({
             "providers": {
                 "moebius": {
@@ -169,15 +174,16 @@ impl PiBolt {
         Ok(agent_dir)
     }
 
-    /// Starts Pi for a run whose worktree and token exist, and the thread that reads it. Pi is given `prompt`; without
-    /// one, a chat's Pi continues the chat's session and the chat waits for the person's next message.
+    /// Starts Pi for a run whose worktree and token exist, and the thread that reads it. Pi is given the `prompt` to
+    /// answer and the `images` sent with it; without a prompt, a chat's Pi continues the chat's session and the chat
+    /// waits for the person's next message.
     pub(super) fn launch(
         &self,
         app: &Arc<App>,
         card: Option<&Card>,
         agent: &AgentConfig,
         run: RunningRun,
-        prompt: Option<&str>,
+        (prompt, images): (Option<&str>, &[ChatImage]),
     ) -> Result<(), String> {
         app.store
             .set_run_worktree(run.id, &run.worktree.to_string_lossy())
@@ -296,7 +302,7 @@ impl PiBolt {
             run: run.clone(),
         };
         lock(&self.live).insert(run.id, live.clone());
-        let begun = self.begin(app, card, &live, prompt, stdout);
+        let begun = self.begin(app, card, &live, (prompt, images), stdout);
         if begun.is_err() {
             // Nothing reads this Pi: end it and what it started, so that it is not orphaned.
             lock(&self.live).remove(&run.id);
@@ -381,7 +387,7 @@ impl PiBolt {
         app: &Arc<App>,
         card: Option<&Card>,
         live: &Live,
-        prompt: Option<&str>,
+        (prompt, images): (Option<&str>, &[ChatImage]),
         stdout: impl Read + Send + 'static,
     ) -> Result<(), String> {
         let run = live.run.clone();
@@ -394,10 +400,21 @@ impl PiBolt {
                     run: run.id,
                     card: card.map(|card| card.id),
                 });
-                send(
-                    &live.stdin,
-                    &json!({ "id": "moebius-prompt", "type": "prompt", "message": prompt }),
-                );
+                let mut said =
+                    json!({ "id": "moebius-prompt", "type": "prompt", "message": prompt });
+                if !images.is_empty() {
+                    said["images"] = json!(
+                        images
+                            .iter()
+                            .map(|image| json!({
+                                "type": "image",
+                                "data": image.base64(),
+                                "mimeType": image.media_type,
+                            }))
+                            .collect::<Vec<_>>()
+                    );
+                }
+                send(&live.stdin, &said);
             }
             None => app
                 .store
@@ -506,6 +523,7 @@ mod tests {
             "Coder",
             (None, false),
             None,
+            &[],
             None,
             "chat",
             &crate::app::ChatSettings::default(),
@@ -808,5 +826,30 @@ mod tests {
             model(&dir.path().join("other"), &other),
             json!({"id": "another-model", "reasoning": true})
         );
+    }
+
+    /// Pi drops the pictures of a message for a model it is not told takes them, so the agent directory has to say
+    /// which of its models looks at them.
+    #[test]
+    fn the_agent_dir_marks_which_of_its_models_looks_at_pictures() {
+        let (dir, _app, pi, _repo) = setup();
+        for (model, looks) in [("qwen-local", false), ("claude-sonnet-4-5", true)] {
+            let agent = AgentConfig {
+                model: model.into(),
+                ..pi.agent_set().agents["Coder"].clone()
+            };
+            let agent_dir = pi
+                .write_agent_dir(dir.path().join(model), &agent, "token")
+                .unwrap();
+            let models: Value =
+                serde_json::from_slice(&std::fs::read(agent_dir.join("models.json")).unwrap())
+                    .unwrap();
+            let marked = models["providers"]["moebius"]["models"][0].get("input")
+                == Some(&json!(["text", "image"]));
+            assert_eq!(
+                marked, looks,
+                "{model} is told the wrong thing about pictures"
+            );
+        }
     }
 }

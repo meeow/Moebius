@@ -11,13 +11,14 @@ import { useNavigate } from "react-router";
 import { startChat } from "../api/calls/chat";
 import { keys } from "../api/keys";
 import type { Snapshot } from "../api/types/board";
-import type { NewChat as NewChatBody } from "../api/types/chat";
+import type { ChatImage, NewChat as NewChatBody } from "../api/types/chat";
 import { type PillOption, PillSelect } from "../ui/chat/PillSelect";
 import { Tag } from "../ui/chat/Tag";
 import { Empty } from "../ui/page/Empty";
 import { Composer } from "./Composer";
 import { draftKey, readDraft, saveDraft } from "./drafts";
 import { levelChoices } from "./levels";
+import { type HeldPicture, holdPictures, imageBodies, takesImages } from "./pictures";
 import { Starters } from "./Starters";
 import { useChoices } from "./useChoices";
 
@@ -26,13 +27,15 @@ export const DEFAULT_AGENT = "Moebius";
 const GRILLING_AGENT = "Grilling-partner";
 export const HARNESS = "harness";
 
-/** What the chat to start is made of; `null` while it cannot start. */
+/** What the chat to start is made of; `null` while it cannot start. A first message carries `pictures` only for a
+ * model that looks at images, which is what the composer checked before offering them. */
 export function newChatBody(draft: {
   agent: string;
   repository: string;
   model: string;
   thinking: string;
   message: string;
+  pictures?: ChatImage[];
 }): NewChatBody | null {
   const message = draft.message.trim();
   if (message === "") return null;
@@ -40,6 +43,7 @@ export function newChatBody(draft: {
     return null;
   }
   const body: NewChatBody = { agent: draft.agent, message };
+  if (draft.pictures !== undefined && draft.pictures.length > 0) body.images = draft.pictures;
   if (draft.repository === HARNESS) body.harness = true;
   else if (draft.repository !== "") body.repository = Number(draft.repository);
   if (draft.model !== "") body.model = draft.model;
@@ -56,11 +60,22 @@ export function NewChat({ snapshot }: { snapshot: Snapshot | undefined }) {
   const [model, setModel] = useState("");
   const [thinking, setThinking] = useState("");
   const [message, setMessage] = useState(() => readDraft(draftKey(null)));
+  const [pictures, setPictures] = useState<HeldPicture[]>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const chosen = choices.agents.find((each) => each.name === agent);
-  const body = newChatBody({ agent, repository, model, thinking, message });
+  // The chat looks at pictures when the chosen model does, or the agent's model without a choice; a model the server
+  // does not list is left to the server, which asks the harness rather than refusing here.
+  const looks = takesImages(choices.available, model, chosen?.model ?? null);
+  const body = newChatBody({
+    agent,
+    repository,
+    model,
+    thinking,
+    message,
+    pictures: looks === false ? [] : imageBodies(pictures),
+  });
   const needsRepository = agent === GRILLING_AGENT && body === null && message.trim() !== "";
   const noModel = chosen !== undefined && chosen.model === "" && model === "";
 
@@ -83,6 +98,13 @@ export function NewChat({ snapshot }: { snapshot: Snapshot | undefined }) {
       setError(e instanceof Error ? e.message : "Couldn't start the chat. Try again.");
       setSending(false);
     }
+  }
+
+  /** Holds the pictures the person pasted, dropped or picked, and says what it had to leave out. */
+  async function hold(files: File[]) {
+    const taken = await holdPictures(files, pictures.length);
+    if (taken.held.length > 0) setPictures((held) => [...held, ...taken.held]);
+    if (taken.refused.length > 0) setError(taken.refused[0] ?? null);
   }
 
   const agentOptions: PillOption[] = (
@@ -111,11 +133,13 @@ export function NewChat({ snapshot }: { snapshot: Snapshot | undefined }) {
   // Only what changes what the person is about to do: where the agent will work, and what it does with what it builds.
   const note = needsRepository
     ? "A grilling works in a repository. Choose one."
-    : repository === HARNESS
-      ? "The agent works on a branch of the harness configuration — its agents, skills and rules. Offer changes when it is done."
-      : agent === GRILLING_AGENT
-        ? "The Grilling partner questions the idea, then puts the issues it proposes in your Inbox to confirm."
-        : null;
+    : looks === false
+      ? "This model answers in words only, so the message cannot carry a picture. Choose one that looks at them, under Model."
+      : repository === HARNESS
+        ? "The agent works on a branch of the harness configuration — its agents, skills and rules. Offer changes when it is done."
+        : agent === GRILLING_AGENT
+          ? "The Grilling partner questions the idea, then puts the issues it proposes in your Inbox to confirm."
+          : null;
 
   // The starters are for the moment before anything is written; once a message is on its way they are in the way.
   const starters: ReactNode =
@@ -153,6 +177,13 @@ export function NewChat({ snapshot }: { snapshot: Snapshot | undefined }) {
         canSend={body !== null && !sending}
         sendHint={needsRepository ? "Choose a repository first" : undefined}
         error={error}
+        pictures={looks === false ? [] : pictures}
+        onHold={looks === false ? undefined : (files) => void hold(files)}
+        onUnhold={
+          looks === false
+            ? undefined
+            : (picture) => setPictures((held) => held.filter((each) => each.key !== picture.key))
+        }
         autoFocus
         pills={
           <>

@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use super::lifecycle::{RunningRun, card_run, detached_run, launch_or_undo};
 use super::prompts::{prompt_for, run_prompt};
-use crate::app::App;
+use crate::app::{App, ChatImage};
 use crate::board::{StartError, Variant};
 use crate::config::AgentConfig;
 use crate::harness::remote::Runners;
@@ -16,12 +16,13 @@ use crate::router::Router;
 use crate::store::{Card, Repository, Run};
 
 /// What a harness is asked to start the process of: the run, with the agent as the run has it, its card if it has one,
-/// and the prompt it is given.
+/// the prompt it is given, and the images attached to a chat's first message.
 pub(in crate::harness) struct Launching<'a> {
     pub(in crate::harness) config: &'a AgentConfig,
     pub(in crate::harness) run: RunningRun,
     pub(in crate::harness) card: Option<&'a Card>,
     pub(in crate::harness) prompt: Option<&'a str>,
+    pub(in crate::harness) images: &'a [ChatImage],
 }
 
 /// How a harness starts the process of a run.
@@ -108,6 +109,7 @@ fn run_card(
             run,
             card: Some(card),
             prompt: Some(prompt),
+            images: &[],
         })
     })
 }
@@ -130,6 +132,7 @@ pub(in crate::harness) fn start_detached(
             run,
             card: None,
             prompt: Some(prompt),
+            images: &[],
         })
     })
 }

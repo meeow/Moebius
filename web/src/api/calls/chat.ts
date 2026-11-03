@@ -2,7 +2,15 @@
 import { get, post } from "../http";
 import type { Change } from "../types/board";
 import type { Run } from "../types/cards";
-import type { Agent, AvailableModels, Chat, NewChat, RunEvent, Skill } from "../types/chat";
+import type {
+  Agent,
+  AvailableModels,
+  Chat,
+  ChatImage,
+  NewChat,
+  RunEvent,
+  Skill,
+} from "../types/chat";
 
 /** How many events one request asks for; a longer chat is read in pieces. */
 export const EVENT_PAGE = 500;
@@ -16,14 +24,33 @@ export function startChat(chat: NewChat): Promise<Run> {
   return post<Run>("/v1/chats", chat);
 }
 
-/** Writes to a chat that has not ended; the agent may be told where the person is with `context`. */
-export function say(chat: number, message: string, context?: string): Promise<Run> {
-  return post<Run>(`/v1/chats/${chat}/messages`, context ? { message, context } : { message });
+/** Writes to a chat that has not ended; the agent may be told where the person is with `context`, and the message may
+ * carry `pictures` for a model that looks at images. */
+export function say(
+  chat: number,
+  message: string,
+  context?: string,
+  pictures: ChatImage[] = [],
+): Promise<Run> {
+  return post<Run>(`/v1/chats/${chat}/messages`, {
+    message,
+    ...(context ? { context } : {}),
+    ...(pictures.length > 0 ? { images: pictures } : {}),
+  });
 }
 
-/** Starts a chat that continues an ended one: its agent and place, told what was said in it. */
-export function continueChat(chat: number, message: string): Promise<Run> {
-  return post<Run>("/v1/chats", { message, continues: chat });
+/** Writing to a chat that has ended goes on in a new chat that is told the old one; its first message may carry
+ * `pictures` for a model that looks at images. */
+export function continueChat(
+  chat: number,
+  message: string,
+  pictures: ChatImage[] = [],
+): Promise<Run> {
+  return post<Run>("/v1/chats", {
+    message,
+    continues: chat,
+    ...(pictures.length > 0 ? { images: pictures } : {}),
+  });
 }
 
 export function stopRun(run: number): Promise<Run> {

@@ -21,8 +21,10 @@ import { Notice } from "../ui/page/Notice";
 import { Composer } from "./Composer";
 import { isOpen, isWorking, statusTag, takesMessage } from "./format";
 import { pageContext } from "./pageContext";
+import { type HeldPicture, holdPictures, imageBodies, takesImages } from "./pictures";
 import { Starters } from "./Starters";
 import { ThreadView } from "./ThreadView";
+import { useChoices } from "./useChoices";
 import { useThread } from "./useThread";
 
 export const FLOATING_AGENT = "Moebius";
@@ -32,9 +34,11 @@ export function FloatingChat() {
   const location = useLocation();
   const snapshot = useQuery({ queryKey: keys.snapshot, queryFn: () => readSnapshot() });
   const chats = useQuery({ queryKey: keys.chats, queryFn: readChats });
+  const choices = useChoices();
   const [shown, setShown] = useState(false);
   const [chatId, setChatId] = useState<number | null>(null);
   const [message, setMessage] = useState("");
+  const [pictures, setPictures] = useState<HeldPicture[]>([]);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -64,6 +68,13 @@ export function FloatingChat() {
   // The same words the Chat page uses for the state of the chat, so the sheet does not look alive when its agent is
   // gone: the next message takes the chat up again rather than starting a new one.
   const tag = chat ? statusTag(chat.status, chat.asks) : null;
+  // Whether the model this chat answers with looks at pictures: without it the sheet takes none, since the agent
+  // would never be shown them.
+  const looks = takesImages(
+    choices.available,
+    chat?.model,
+    choices.agents.find((each) => each.name === FLOATING_AGENT)?.model ?? null,
+  );
 
   // Escape closes the sheet wherever the focus is on the page. Once it closes, the focus goes back to the button that
   // opened it, so a keyboard does not lose its place.
@@ -91,9 +102,10 @@ export function FloatingChat() {
     setSending(true);
     setError(null);
     setSent((n) => n + 1);
+    const attached = imageBodies(pictures);
     try {
       if (chatId !== null && writesHere) {
-        await say(chatId, text, where.text);
+        await say(chatId, text, where.text, attached);
         // Taking a chat up again says something new in its tag and in the list of chats, so both are read again
         // instead of waiting for the events to say so.
         if (!up) await queryClient.invalidateQueries({ queryKey: keys.chats });
@@ -103,16 +115,25 @@ export function FloatingChat() {
           message: text,
           context: where.text,
           origin: "assistant",
+          ...(attached.length === 0 ? {} : { images: attached }),
           ...(where.repository === null ? {} : { repository: where.repository }),
         });
         setChatId(run.id);
         await queryClient.invalidateQueries({ queryKey: keys.chats });
       }
       if (held.current.trim() === text) write("");
+      setPictures([]);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't send the message. Try again.");
     }
     setSending(false);
+  }
+
+  /** Holds the pictures the person pasted or dropped, and says what it had to leave out. */
+  async function hold(files: File[]) {
+    const taken = await holdPictures(files, pictures.length);
+    if (taken.held.length > 0) setPictures((held) => [...held, ...taken.held]);
+    if (taken.refused.length > 0) setError(taken.refused[0] ?? null);
   }
 
   if (!shown) {
@@ -159,6 +180,7 @@ export function FloatingChat() {
               title="New conversation"
               onClick={() => {
                 setChatId(null);
+                setPictures([]);
                 setError(null);
               }}
             >
@@ -213,7 +235,19 @@ export function FloatingChat() {
         onChange={write}
         onSend={() => void send()}
         canSend={message.trim() !== "" && !sending}
+        sendHint={
+          looks === false
+            ? "This model answers in words only, so the message cannot carry a picture."
+            : undefined
+        }
         error={error}
+        pictures={looks === false ? [] : pictures}
+        onHold={looks === false ? undefined : (files) => void hold(files)}
+        onUnhold={
+          looks === false
+            ? undefined
+            : (picture) => setPictures((held) => held.filter((each) => each.key !== picture.key))
+        }
         placeholder="Ask the agent"
         autoFocus
         compact

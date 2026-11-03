@@ -7,6 +7,7 @@
  * sentence. Every event is stored under its `seq`, answered by `GET /v1/runs/{id}/events` and sent on the event socket
  * as `{"kind": "run_event", "data": {"run", "seq", "kind", "data"}}`, as the server does.
  */
+import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { eventPage } from "./events";
 
@@ -124,13 +125,59 @@ const AGENTS: Agent[] = [
 
 const MODELS = {
   models: [
-    { id: "fake-coder", protocol: "openai", upstream: "http://127.0.0.1:1" },
-    { id: "fake-small", protocol: "openai", upstream: "http://127.0.0.1:1" },
+    // The Coder's model looks at pictures; the small one answers in words only.
+    { id: "fake-coder", protocol: "openai", upstream: "http://127.0.0.1:1", images: true },
+    { id: "fake-small", protocol: "openai", upstream: "http://127.0.0.1:1", images: false },
   ],
   errors: [],
-  classes: [{ name: "strong", models: ["fake-coder"], protocols: ["openai"] }],
+  classes: [{ name: "strong", models: ["fake-coder"], protocols: ["openai"], images: true }],
   decision_models: [],
 };
+
+/** The kinds both harnesses read, as the server's `IMAGE_KINDS`. */
+const PICTURE_KINDS = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+const PICTURE_SUFFIX: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/gif": "gif",
+  "image/webp": "webp",
+};
+/** A PNG one pixel square, which is what the fake serves back for any picture it was sent. */
+const ONE_PIXEL_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+/** The pictures a message body carries, named after their bytes as the server names them; null is the sentence for
+ * the first thing wrong with them, which is the body of the 422 the server answers with. */
+function keptPictures(
+  body: Record<string, unknown>,
+  model: string | null,
+): { kept: Array<Record<string, unknown>> } | { refused: string } {
+  const sent = Array.isArray(body.images) ? body.images : [];
+  if (sent.length === 0) return { kept: [] };
+  const message = typeof body.message === "string" ? body.message.trim() : "";
+  if (message === "") return { refused: "a picture needs a message with it" };
+  if (model === "fake-small") return { refused: "that model does not look at pictures" };
+  const kept: Array<Record<string, unknown>> = [];
+  for (const value of sent) {
+    const image = (value ?? {}) as Record<string, unknown>;
+    const kind = typeof image.media_type === "string" ? image.media_type : "";
+    const data = typeof image.data === "string" ? image.data : "";
+    if (!PICTURE_KINDS.includes(kind) || data === "") {
+      return {
+        refused: `a picture is not one of the kinds a chat takes: ${PICTURE_KINDS.join(", ")}`,
+      };
+    }
+    const bytes = Buffer.from(data, "base64");
+    kept.push({
+      ...(typeof image.name === "string" ? { name: image.name } : {}),
+      media_type: kind,
+      file: `${createHash("sha256").update(bytes).digest("hex").slice(0, 16)}.${PICTURE_SUFFIX[kind]}`,
+    });
+  }
+  return { kept };
+}
 
 const LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
@@ -283,6 +330,14 @@ export function createFakeChat(
       }
       if (path === "/v1/skills" && method === "GET") return reply(response, 200, []);
 
+      const picture = /^\/v1\/chats\/(\d+)\/images\/([\w.-]+)$/.exec(path);
+      if (picture && method === "GET") {
+        if (!find(Number(picture[1]))) return reply(response, 404, "no such run");
+        response.writeHead(200, { "content-type": "image/png" });
+        response.end(ONE_PIXEL_PNG);
+        return true;
+      }
+
       if (path === "/v1/chats" && method === "GET") {
         const all = url.searchParams.get("all") === "true";
         return reply(
@@ -311,6 +366,8 @@ export function createFakeChat(
         if (agent === "Grilling-partner" && typeof body.repository !== "number") {
           return reply(response, 422, "a grilling needs a repository");
         }
+        const sent = keptPictures(body, typeof body.model === "string" ? body.model : null);
+        if ("refused" in sent) return reply(response, 422, sent.refused);
         const message = typeof body.message === "string" ? body.message : null;
         const id = fake.seed({
           agent,
@@ -324,7 +381,10 @@ export function createFakeChat(
         });
         const chat = find(id) as FakeChatRecord;
         if (message !== null) {
-          fake.emit(id, "said", { message });
+          fake.emit(id, "said", {
+            message,
+            ...(sent.kept.length > 0 ? { images: sent.kept } : {}),
+          });
           answer(id, message);
         }
         return reply(response, 200, run(chat));
@@ -355,8 +415,13 @@ export function createFakeChat(
             } else if (!["starting", "running", "waiting"].includes(chat.status)) {
               return reply(response, 422, "the chat has ended");
             }
+            const sent = keptPictures(body, chat.model);
+            if ("refused" in sent) return reply(response, 422, sent.refused);
             chat.status = "running";
-            fake.emit(id, "said", { message });
+            fake.emit(id, "said", {
+              message,
+              ...(sent.kept.length > 0 ? { images: sent.kept } : {}),
+            });
             answer(id, message);
             return reply(response, 200, run(chat));
           }

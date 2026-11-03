@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 
 use super::reader::Reader;
 use super::{ClaudeCode, Live, lock, send, user_message};
-use crate::app::App;
+use crate::app::{App, ChatImage};
 use crate::bus::Event;
 use crate::config::AgentConfig;
 use crate::harness::mcp;
@@ -131,7 +131,8 @@ impl ClaudeCode {
     }
 
     /// Starts Claude Code for a run whose worktree and token exist, on the session `session` (resumed when the flag
-    /// is set), and the thread that reads it. It is given `prompt`; without one, a chat waits for the person's message.
+    /// is set), and the thread that reads it. It is given the `prompt` to answer and the `images` sent with it;
+    /// without a prompt, a chat waits for the person's message.
     pub(super) fn launch(
         &self,
         app: &Arc<App>,
@@ -139,7 +140,7 @@ impl ClaudeCode {
         agent: &AgentConfig,
         run: RunningRun,
         (session, resumes): (&str, bool),
-        prompt: Option<&str>,
+        (prompt, images): (Option<&str>, &[ChatImage]),
     ) -> Result<(), String> {
         if self.launcher_configured {
             return Err(
@@ -221,7 +222,7 @@ impl ClaudeCode {
             app: app.clone(),
         };
         lock(&self.live).insert(run.id, live.clone());
-        let begun = self.begin(app, card, &live, prompt, stdout);
+        let begun = self.begin(app, card, &live, (prompt, images), stdout);
         if begun.is_err() {
             // Nothing reads this Claude Code: end it and what it started, so that it is not orphaned.
             lock(&self.live).remove(&run.id);
@@ -232,13 +233,14 @@ impl ClaudeCode {
         begun
     }
 
-    /// Marks the run as started, gives Claude Code its prompt and starts the thread that reads it.
+    /// Marks the run as started, gives Claude Code its prompt and the `images` sent with it, and starts the thread
+    /// that reads it.
     fn begin(
         &self,
         app: &Arc<App>,
         card: Option<&Card>,
         live: &Live,
-        prompt: Option<&str>,
+        (prompt, images): (Option<&str>, &[ChatImage]),
         stdout: impl Read + Send + 'static,
     ) -> Result<(), String> {
         let run = live.run.clone();
@@ -253,7 +255,7 @@ impl ClaudeCode {
                     card: card.map(|card| card.id),
                 });
                 keep(app, run.id, chat, "agent_start", &json!({}));
-                send(&live.stdin, &user_message(&live.session, prompt));
+                send(&live.stdin, &user_message(&live.session, prompt, images));
             }
             None => app
                 .store

@@ -27,7 +27,14 @@ describe("a conversation that is still being read", () => {
 
   it("keeps the turns already read when the thread is read again", () => {
     // A read that is repeated while the words are on the screen is a refresh: the bars are for the first read only.
-    const said: Entry = { at: 1, seq: 1, kind: "person", said: "said", message: "Hello there" };
+    const said: Entry = {
+      at: 1,
+      seq: 1,
+      kind: "person",
+      said: "said",
+      message: "Hello there",
+      pictures: [],
+    };
     const { rerender } = render(
       <ThreadView {...nothing} entries={[said]} loading loadingMessage="Reading the chat" />,
     );
@@ -47,7 +54,7 @@ describe("a conversation that is still being read", () => {
 
 /** An entry of the person, as the conversation gives it to the list. */
 function said(seq: number, message = `go ${seq}`): Entry {
-  return { at: 1_700_000_000 + seq, seq, kind: "person", said: "said", message };
+  return { at: 1_700_000_000 + seq, seq, kind: "person", said: "said", message, pictures: [] };
 }
 
 describe("a conversation with more chat above it", () => {

@@ -843,3 +843,106 @@ describe("the floating chat", () => {
     expect(await window.getByText(/You said:/).count()).toBe(0);
   });
 });
+
+describe("a message with a picture", () => {
+  /** A PNG one pixel square, the smallest thing a model could be shown. */
+  const PNG = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  const clip = () => page.getByRole("button", { name: "Attach a picture" });
+  const held = () => page.getByLabel("Pictures with this message");
+
+  it.skipIf(usesRealServer)(
+    "sends a picked picture with the message and shows it in the thread",
+    async () => {
+      await open("/chat");
+      fake().autoAnswer = false;
+      const id = fake().seed({
+        title: "Look",
+        agent: "Coder",
+        model: "fake-coder",
+        events: [["said", { message: "Look at this" }]],
+      });
+      await page.goto(`${server.url}/chat/${id}`);
+      await clip().waitFor();
+      await page
+        .locator("input[type=file]")
+        .setInputFiles({ name: "screen.png", mimeType: "image/png", buffer: PNG });
+      await held().getByRole("img", { name: "screen.png" }).waitFor();
+
+      await say("What is in this picture?");
+      await expect.poll(() => fake().said.length).toBe(1);
+      // The server is told the name, the kind and the bytes, which is what it keeps and serves again.
+      expect(fake().said[0]?.body.images).toEqual([
+        { name: "screen.png", media_type: "image/png", data: PNG.toString("base64") },
+      ]);
+      // The thread shows the picture the sent message carried, fetched from the route the chat's
+      // own directory serves it from — not the copy the composer holds before the message goes.
+      const shown = page.getByTestId("person-pictures").getByRole("img", { name: "screen.png" });
+      await expect.poll(async () => shown.count()).toBe(1);
+      expect(await shown.first().getAttribute("src")).toContain("/images/");
+    },
+  );
+
+  it.skipIf(usesRealServer)("keeps a picture pasted into the field", async () => {
+    await open("/chat");
+    fake().autoAnswer = false;
+    const id = fake().seed({ title: "Paste", events: [["said", { message: "Paste" }]] });
+    await page.goto(`${server.url}/chat/${id}`);
+    await clip().waitFor();
+    await page.evaluate(async (bytes: number[]) => {
+      const file = new File([new Uint8Array(bytes)], "pasted.png", { type: "image/png" });
+      const carried = new DataTransfer();
+      carried.items.add(file);
+      const area = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]');
+      area?.dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData: carried, bubbles: true, cancelable: true }),
+      );
+    }, Array.from(PNG));
+    await held().getByRole("img", { name: "pasted.png" }).waitFor();
+    // The paste did not reach the field as text.
+    await expect.poll(() => field().inputValue()).toBe("");
+
+    await say("And in this one?");
+    await expect.poll(() => fake().said.length).toBe(1);
+    expect(fake().said[0]?.body.images).toEqual([
+      { name: "pasted.png", media_type: "image/png", data: PNG.toString("base64") },
+    ]);
+  });
+
+  it.skipIf(usesRealServer)("takes a picture off again before sending", async () => {
+    await open("/chat");
+    fake().autoAnswer = false;
+    const id = fake().seed({ title: "Off", events: [["said", { message: "Off" }]] });
+    await page.goto(`${server.url}/chat/${id}`);
+    await page
+      .locator("input[type=file]")
+      .setInputFiles({ name: "oops.png", mimeType: "image/png", buffer: PNG });
+    await held().getByRole("img", { name: "oops.png" }).waitFor();
+    await held().getByRole("button", { name: "Take oops.png off the message" }).click();
+    await held().waitFor({ state: "detached" });
+
+    await say("Words only");
+    await expect.poll(() => fake().said.length).toBe(1);
+    expect(fake().said[0]?.body.images).toBeUndefined();
+  });
+
+  it.skipIf(usesRealServer)(
+    "says why a model that answers in words only is offered no picture",
+    async () => {
+      await open("/chat");
+      fake().autoAnswer = false;
+      const id = fake().seed({
+        title: "Words",
+        agent: "Coder",
+        model: "fake-small",
+        events: [["said", { message: "Words" }]],
+      });
+      await page.goto(`${server.url}/chat/${id}`);
+      await page.getByTestId("person-message").waitFor();
+      await page.getByText("answers in words only").waitFor();
+      expect(await clip().count()).toBe(0);
+    },
+  );
+});
