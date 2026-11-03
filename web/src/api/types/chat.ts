@@ -29,10 +29,20 @@ export interface Chat {
   thinking: string | null;
 }
 
+/** A picture a chat message carries, as `POST /v1/chats` and `POST /v1/chats/{id}/messages` take it: what the
+ * person's clipboard or file was called, which kind of image it is, and its bytes in base64. */
+export interface ChatImage {
+  name?: string;
+  media_type: string;
+  data: string;
+}
+
 /** The body of `POST /v1/chats`; every field is optional. */
 export interface NewChat {
   agent?: string;
   message?: string;
+  /** The pictures the first message carries, for a model that looks at images. */
+  images?: ChatImage[];
   model?: string;
   thinking?: string;
   repository?: number;
@@ -68,12 +78,16 @@ export interface AvailableModel {
   id: string;
   protocol: string;
   upstream: string;
+  /** Whether the model takes pictures along with its text, which a chat checks before it sends one. */
+  images: boolean;
 }
 
 export interface AvailableClass {
   name: string;
   models: string[];
   protocols: string[];
+  /** True only when every model of the class takes pictures, since a chat cannot know which of them answers. */
+  images: boolean;
 }
 
 /** What `GET /v1/models/available` says. */

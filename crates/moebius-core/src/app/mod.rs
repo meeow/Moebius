@@ -44,7 +44,10 @@ pub use automations::{
 };
 pub use board::{BoardFacts, CardFacts};
 pub use cards::HistoryEntry;
-pub use chats::{ASSISTANT_ORIGIN, CHAT_ORIGIN, Chat, ChatSettings, THINKING_LEVELS};
+pub use chats::{
+    ASSISTANT_ORIGIN, CHAT_ORIGIN, Chat, ChatImage, ChatSettings, IMAGE_KINDS, MAX_IMAGE_BYTES,
+    MAX_IMAGES, THINKING_LEVELS, check_images, image_kind,
+};
 pub(crate) use checks::tail;
 pub use diffs::Diff;
 pub use reproduce::{Reproduction, TestRun};

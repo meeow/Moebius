@@ -17,7 +17,13 @@ const call = (id: string, tool: string, input: ToolCall["input"], refusedCall = 
 });
 const read = (id: string, path: string) => call(id, "read", { type: "read", path });
 const text = (value: string): Entry => ({ at: 0, kind: "text", text: value });
-const person = (message: string): Entry => ({ at: 0, kind: "person", said: "said", message });
+const person = (message: string): Entry => ({
+  at: 0,
+  kind: "person",
+  said: "said",
+  message,
+  pictures: [],
+});
 
 describe("groupTurns", () => {
   it("heads a turn with the person's message and puts what follows in its body", () => {

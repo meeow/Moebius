@@ -1,12 +1,16 @@
 //! Chats: a person starting one with an agent, in a repository, the harness configuration repository or nowhere,
-//! writing to it, changing its model and reasoning, ending it and continuing it later, and the list of chats.
+//! writing to it with words and the images the model can look at, changing its model and reasoning, ending it and
+//! continuing it later, and the list of chats.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 
 use super::{App, AppError, Result};
 use crate::blobs::redact;
@@ -98,6 +102,146 @@ impl ChatSettings {
     }
 }
 
+/// An image the person attaches to a chat message: what they called it, which kind of image it is, and its bytes.
+/// The bytes go to the chat's agent along with the message; a copy is kept under the chat, so the chat can show what
+/// was sent even after its agent is gone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatImage {
+    /// What the person's browser or clipboard called it, which is what the chat shows them; none is fine.
+    pub name: Option<String>,
+    /// One of the kinds of [`IMAGE_KINDS`].
+    pub media_type: String,
+    pub bytes: Vec<u8>,
+}
+
+/// The kinds of image a chat takes: the ones both Pi-Bolt and Claude Code take in a message.
+pub const IMAGE_KINDS: [&str; 4] = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+
+/// How many images one chat message can carry. A person pastes a screen at a time; this leaves room for a few.
+pub const MAX_IMAGES: usize = 6;
+
+/// How large one image of a chat message can be, before the harnesses' own size limit.
+pub const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
+
+impl ChatImage {
+    /// The image as Pi's `prompt` takes it: its bytes in base64, with the kind beside them.
+    pub fn base64(&self) -> String {
+        STANDARD.encode(&self.bytes)
+    }
+
+    /// The image as Claude Code's `stream-json` takes it: a data URL of its kind.
+    pub fn data_url(&self) -> String {
+        format!("data:{};base64,{}", self.media_type, self.base64())
+    }
+
+    /// What a chat shows for this image in place of its bytes while its agent is still answering: the name the
+    /// person's browser gave it, or a plain one of the kind.
+    pub fn shown_name(&self) -> String {
+        self.name.clone().unwrap_or_else(|| {
+            format!(
+                "image.{}",
+                image_extension(&self.media_type).unwrap_or("bin")
+            )
+        })
+    }
+
+    /// The name the chat keeps this image under in its own directory: what its bytes hold, with the extension of
+    /// its kind. An image of a kind Moebius does not keep has no name.
+    pub fn file_name(&self) -> Option<String> {
+        Some(format!(
+            "{}.{}",
+            hex::encode(Sha256::digest(&self.bytes)),
+            image_extension(&self.media_type)?
+        ))
+    }
+
+    /// What the chat's agent is given of this image besides its bytes: its kind, and a name to hold it by.
+    pub fn described(&self) -> serde_json::Value {
+        json!({
+            "name": self.shown_name(),
+            "media_type": self.media_type,
+            "file": self.file_name(),
+        })
+    }
+}
+
+/// The extension a chat keeps an image of each kind under; none for a kind it does not keep.
+fn image_extension(media_type: &str) -> Option<&'static str> {
+    match media_type {
+        "image/png" => Some("png"),
+        "image/jpeg" => Some("jpg"),
+        "image/gif" => Some("gif"),
+        "image/webp" => Some("webp"),
+        _ => None,
+    }
+}
+
+/// Which kind of image a chat keeps under each extension, which is what its address answers as.
+pub fn image_kind(extension: &str) -> Option<&'static str> {
+    match extension {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    }
+}
+
+/// Refuses a chat message carrying more than [`MAX_IMAGES`] images, one larger than [`MAX_IMAGE_BYTES`], one of a
+/// kind outside [`IMAGE_KINDS`], or one whose bytes are not the picture its kind says. Whether the model can look at
+/// them is `App::start_chat`'s, once the model is known.
+pub fn check_images(images: &[ChatImage]) -> Result<()> {
+    if images.len() > MAX_IMAGES {
+        return Err(AppError::Invalid(format!(
+            "a chat message takes at most {MAX_IMAGES} images, not {}",
+            images.len()
+        )));
+    }
+    for image in images {
+        if image.bytes.is_empty() {
+            return Err(AppError::Invalid(format!(
+                "image {} is empty",
+                image.shown_name()
+            )));
+        }
+        if image.bytes.len() > MAX_IMAGE_BYTES {
+            return Err(AppError::Invalid(format!(
+                "image {} is larger than {MAX_IMAGE_BYTES} bytes",
+                image.shown_name()
+            )));
+        }
+        if !IMAGE_KINDS.contains(&image.media_type.as_str()) {
+            return Err(AppError::Invalid(format!(
+                "a chat takes {} and not {}",
+                IMAGE_KINDS.join(", "),
+                image.media_type
+            )));
+        }
+        // The chat keeps the bytes under the kind it was told and answers them back as that kind, so they have to be
+        // what it is said they are.
+        if !bytes_are_of_kind(&image.media_type, &image.bytes) {
+            return Err(AppError::Invalid(format!(
+                "image {} is no image: its bytes are not a {}",
+                image.shown_name(),
+                image.media_type
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Whether the bytes begin as a picture of `media_type` does. Every kind a chat takes begins with a few bytes that
+/// say which it is, which is also what a person's clipboard can get wrong.
+fn bytes_are_of_kind(media_type: &str, bytes: &[u8]) -> bool {
+    match media_type {
+        "image/png" => bytes.starts_with(b"\x89PNG"),
+        "image/jpeg" => bytes.starts_with(&[0xFF, 0xD8, 0xFF]),
+        "image/gif" => bytes.starts_with(b"GIF8"),
+        "image/webp" => bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP"),
+        _ => false,
+    }
+}
+
 /// The protocol a chat speaks to `model` when its agent speaks `agent`: the agent's, unless the router's upstreams serve
 /// the model (`served`, the protocols they list it under) only in others, then the first of those.
 fn chat_protocol(agent: Option<Protocol>, served: &[Protocol]) -> Option<Protocol> {
@@ -113,6 +257,14 @@ fn agent_protocol(runs: &dyn Runs, name: &str) -> Option<Protocol> {
         .into_iter()
         .find(|agent| agent.name == name && !agent.model.is_empty())
         .map(|agent| agent.protocol)
+}
+
+/// The model the agent `name` runs on, as its definition has it; none when it does not name one.
+fn agent_model(runs: &dyn Runs, name: &str) -> Option<String> {
+    runs.agents()
+        .into_iter()
+        .find(|agent| agent.name == name && !agent.model.is_empty())
+        .map(|agent| agent.model)
 }
 
 /// Refuses a blank model and a reasoning level Pi-Bolt does not take.
@@ -189,6 +341,7 @@ impl App {
         repository_id: Option<i64>,
         harness: bool,
         message: Option<&str>,
+        images: &[ChatImage],
         context: Option<&str>,
         continues: Option<i64>,
         origin: Option<&str>,
@@ -224,6 +377,12 @@ impl App {
             ));
         }
         check_settings(model, thinking)?;
+        check_images(images)?;
+        if !images.is_empty() && message.is_none() {
+            return Err(AppError::Invalid(
+                "images travel with a message, which cannot be empty".into(),
+            ));
+        }
         if !runs.has_agent(agent) {
             return Err(AppError::Invalid(format!("no agent named {agent}")));
         }
@@ -245,6 +404,13 @@ impl App {
         }
         if let Some(thinking) = thinking {
             settings.thinking = Some(thinking.to_string());
+        }
+        // A picture only goes to a chat whose model looks at images; the person is told to choose one that does.
+        if !images.is_empty() && !self.takes_images(runs, agent, settings.model.as_deref()) {
+            return Err(AppError::Invalid(format!(
+                "{} takes words only: send the message without its images, or choose a model that looks at them",
+                settings.model.as_deref().unwrap_or(agent)
+            )));
         }
         let repository = repository_id.map(|id| self.repository(id)).transpose()?;
         let conversation = earlier
@@ -268,6 +434,7 @@ impl App {
             agent,
             place,
             message,
+            images,
             prompt.as_deref(),
             origin,
             &settings,
@@ -353,18 +520,34 @@ impl App {
         Ok(text[start..].to_string())
     }
 
-    /// A person writes to a chat that has not ended: the chat keeps the message as a `said` event, and the agent
-    /// answers it when it is done with what it is doing, told first where the person is when `context` is given.
+    /// A person writes to a chat that has not ended: the chat keeps the message, and the images the person attached
+    /// to it, as a `said` event, and the agent answers it when it is done with what it is doing, told first where
+    /// the person is when `context` is given.
     pub fn say_in_chat(
         &self,
         runs: &dyn Runs,
         run_id: i64,
         message: &str,
+        images: &[ChatImage],
         context: Option<&str>,
     ) -> Result<Run> {
         let run = self.running_chat(run_id)?;
         if message.trim().is_empty() {
             return Err(AppError::Invalid("a message cannot be blank".into()));
+        }
+        check_images(images)?;
+        if !images.is_empty()
+            && !self.takes_images(
+                runs,
+                &run.agent,
+                self.chat_settings(run_id)?.model.as_deref(),
+            )
+        {
+            return Err(AppError::Invalid(
+                "this chat's model takes words only: send the message without its images, or change the model to \
+                 one that looks at them"
+                    .into(),
+            ));
         }
         if self.terminals.is_open(tui_key(run_id)) {
             return Err(AppError::Conflict(format!(
@@ -373,10 +556,15 @@ impl App {
         }
         let _turn = self.chat_turns.lock().unwrap_or_else(|e| e.into_inner());
         // Stored first, so that it comes before the agent's records of its answer.
-        self.record_run_event(run_id, "said", &json!({ "message": redact(message) }))?;
+        let described = self.store_chat_images(run_id, images);
+        self.record_run_event(
+            run_id,
+            "said",
+            &json!({ "message": redact(message), "images": described }),
+        )?;
         // The chat works from now on, before its agent says so, so that its worktree is not offered meanwhile.
         self.store.set_chat_working(run_id)?;
-        if !runs.say(run_id, &with_context(context, message)) {
+        if !runs.say(run_id, &with_context(context, message), images) {
             return Err(AppError::Invalid(format!("chat {run_id} has ended")));
         }
         Ok(run)
@@ -498,11 +686,164 @@ impl App {
         }
         files.len()
     }
+
+    /// The directory holding the images the messages of the chat `run_id` carry. It is the chat's own, beside its
+    /// transcript rather than inside a worktree, so a picture a person pastes changes no files of the repository.
+    pub fn chat_image_dir(&self, run_id: i64) -> PathBuf {
+        self.data_dir
+            .join("chats")
+            .join(run_id.to_string())
+            .join("images")
+    }
+
+    /// Keeps a copy of each of the `images` a chat message carries under the chat's own directory, named by what its
+    /// bytes hold, and answers what the message's `said` event says of them. The bytes do not go into the event,
+    /// which holds JSON text; the app serves them back from the address each entry names.
+    ///
+    /// A copy that cannot be written leaves the message whole: the agent is handed the picture either way, and the
+    /// chat shows the picture's name where it would otherwise show the picture.
+    pub fn store_chat_images(&self, run_id: i64, images: &[ChatImage]) -> serde_json::Value {
+        let dir = self.chat_image_dir(run_id);
+        let mut described = Vec::new();
+        for image in images {
+            if let Some(file) = image.file_name() {
+                let path = dir.join(&file);
+                if !path.is_file() {
+                    let _ = std::fs::create_dir_all(&dir);
+                    let _ = std::fs::write(&path, &image.bytes);
+                }
+            }
+            described.push(image.described());
+        }
+        json!(described)
+    }
+
+    /// The bytes of the image `file` the chat `run_id` keeps, and which kind of image it is. Nothing when `file` is
+    /// not a name Moebius writes, so no address can reach outside the chat's own directory.
+    pub fn read_chat_image(&self, run_id: i64, file: &str) -> Option<(Vec<u8>, &'static str)> {
+        let (hash, extension) = file.split_once('.')?;
+        let kind = image_kind(extension)?;
+        if hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return None;
+        }
+        let bytes = std::fs::read(self.chat_image_dir(run_id).join(file)).ok()?;
+        Some((bytes, kind))
+    }
+
+    /// Whether a chat on `model`, or on the model its agent `agent` has when the chat names none, looks at images
+    /// along with its words. A chat whose model Moebius cannot work out is given the images: what the model itself
+    /// says of them is likelier to be true than a guess here, and the harness reports it.
+    pub fn takes_images(&self, runs: &dyn Runs, agent: &str, model: Option<&str>) -> bool {
+        let known = model
+            .map(str::to_string)
+            .or_else(|| agent_model(runs, agent))
+            .filter(|model| !model.is_empty());
+        match known {
+            Some(model) => runs.takes_images(&model),
+            None => true,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::asks;
+    use super::{
+        ChatImage, IMAGE_KINDS, MAX_IMAGE_BYTES, MAX_IMAGES, asks, bytes_are_of_kind, check_images,
+        image_extension, image_kind,
+    };
+
+    /// A picture a message carries, of the kind it says and holding what it is given.
+    fn picture(name: Option<&str>, media_type: &str, bytes: &[u8]) -> ChatImage {
+        ChatImage {
+            name: name.map(str::to_string),
+            media_type: media_type.to_string(),
+            bytes: bytes.to_vec(),
+        }
+    }
+
+    /// The bytes a PNG begins with, which is enough for these tests: Moebius keeps a picture's bytes as they are.
+    const PNG_HEAD: &[u8] = b"\x89PNG\r\n\x1a\n";
+
+    #[test]
+    fn a_message_carries_a_few_pictures_of_the_kinds_the_harnesses_take() {
+        assert!(check_images(&[]).is_ok());
+        assert!(check_images(&[picture(None, "image/png", PNG_HEAD)]).is_ok());
+
+        // One picture more than a message carries.
+        let many = vec![picture(None, "image/png", PNG_HEAD); MAX_IMAGES + 1];
+        let why = check_images(&many).unwrap_err().to_string();
+        assert!(why.contains(&format!("at most {MAX_IMAGES}")), "{why}");
+
+        // A kind neither harness takes.
+        let why = check_images(&[picture(Some("scan.tiff"), "image/tiff", b"II*\0")])
+            .unwrap_err()
+            .to_string();
+        assert!(why.contains(&IMAGE_KINDS.join(", ")), "{why}");
+        assert!(why.contains("image/tiff"), "{why}");
+
+        // Bytes that are no picture of the kind they are sent as.
+        let why = check_images(&[picture(
+            Some("notes.png"),
+            "image/png",
+            b"notes, not a picture",
+        )])
+        .unwrap_err()
+        .to_string();
+        assert!(why.contains("is no image"), "{why}");
+        assert!(why.contains("notes.png"), "{why}");
+
+        // A picture larger than a chat keeps, and none at all.
+        let big = vec![0u8; MAX_IMAGE_BYTES + 1];
+        let why = check_images(&[picture(None, "image/png", &big)])
+            .unwrap_err()
+            .to_string();
+        assert!(why.contains(&format!("{MAX_IMAGE_BYTES}")), "{why}");
+        let why = check_images(&[picture(None, "image/png", &[])])
+            .unwrap_err()
+            .to_string();
+        assert!(why.contains("empty"), "{why}");
+    }
+
+    #[test]
+    fn each_kind_a_chat_keeps_begins_with_bytes_that_say_which_it_is() {
+        assert!(bytes_are_of_kind("image/png", b"\x89PNG\r\n\x1a\nrest"));
+        assert!(bytes_are_of_kind("image/jpeg", &[0xFF, 0xD8, 0xFF, 0xE0]));
+        assert!(bytes_are_of_kind("image/gif", b"GIF89a\0"));
+        assert!(bytes_are_of_kind("image/webp", b"RIFF\0\0\0\0WEBPVP8 "));
+        // A video of the same container, and a picture of another kind sent under this one's name.
+        assert!(!bytes_are_of_kind("image/webp", b"RIFF\0\0\0\0AVI "));
+        assert!(!bytes_are_of_kind("image/png", b"GIF89a\0"));
+        assert!(!bytes_are_of_kind("image/png", b""));
+    }
+
+    #[test]
+    fn a_picture_is_kept_by_what_it_holds_and_shown_by_what_it_is_called() {
+        let kept = picture(Some("Screenshot of the board.png"), "image/png", PNG_HEAD);
+        let file = kept.file_name().unwrap();
+        assert!(file.ends_with(".png"), "{file}");
+        assert_eq!(file.len(), 64 + ".png".len(), "{file}");
+        // The same bytes again under another name is the same picture kept once.
+        assert_eq!(
+            picture(Some("again.png"), "image/png", PNG_HEAD)
+                .file_name()
+                .unwrap(),
+            file
+        );
+        assert_eq!(kept.described()["name"], "Screenshot of the board.png");
+        assert_eq!(kept.described()["media_type"], "image/png");
+        assert_eq!(kept.described()["file"], file);
+
+        // A picture the clipboard gave no name is shown by its kind, and goes to a harness as its own bytes.
+        let unnamed = picture(None, "image/jpeg", &[0xFF, 0xD8, 0xFF]);
+        assert_eq!(unnamed.shown_name(), "image.jpg");
+        assert_eq!(unnamed.base64(), "/9j/");
+        assert_eq!(unnamed.data_url(), "data:image/jpeg;base64,/9j/");
+
+        assert_eq!(image_extension("image/gif"), Some("gif"));
+        assert_eq!(image_extension("image/svg+xml"), None);
+        assert_eq!(image_kind("jpg"), Some("image/jpeg"));
+        assert_eq!(image_kind("exe"), None);
+    }
 
     #[test]
     fn an_answer_asks_when_its_last_line_ends_in_a_question() {

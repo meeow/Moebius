@@ -1085,17 +1085,21 @@ the Models screen's decision model. Response:
 
 ```json
 {
-  "models": [{"id": "claude-sonnet-4-5", "protocol": "anthropic", "upstream": "https://api.anthropic.com"}],
+  "models": [{"id": "claude-sonnet-4-5", "protocol": "anthropic", "upstream": "https://api.anthropic.com", "images": true}],
   "errors": [{"upstream": "https://api.example.com", "message": "401"}],
-  "classes": [{"name": "strong", "models": ["claude-sonnet-4-5", "qwen-local"], "protocols": ["anthropic"]}],
+  "classes": [{"name": "strong", "models": ["claude-sonnet-4-5", "qwen-local"], "protocols": ["anthropic"], "images": false}],
   "decision_models": ["moebius-decider"]
 }
 ```
 
-- `models` are sorted by `protocol`, then `id`; the same model of the same upstream is listed once.
+- `models` are sorted by `protocol`, then `id`; the same model of the same upstream is listed once. `images` says
+  whether the model takes pictures along with its text, which is what a chat checks before it sends one (see
+  `POST /v1/chats`); the server knows it from the model's name, so a model it does not recognise is listed as one
+  that does not.
 - `classes` are the model classes of `[router.classes]` by name (see [the router](router.md#model-classes)), which may be
   named wherever a model is: each with its models, first tried first, and the protocols `models` lists any of them
-  under (empty when none is listed). They are the router's as the request is answered, never kept.
+  under (empty when none is listed). They are the router's as the request is answered, never kept. `images` is true
+  only when every model of the class takes pictures, since a chat cannot know beforehand which of them answers.
 - `decision_models` are the ids the decision model's endpoint lists at `<url>/models`, with its key; empty without
   `decision=true` or without a decision model. An endpoint that cannot be asked, or whose key is not set, is in
   `errors` under its `url`.
@@ -1320,6 +1324,7 @@ Request:
 |---|---|---|
 | `agent` | string | An agent of the configuration, `Moebius` or `Grilling-partner`. Without it the chat is with the Moebius agent (see [configuration](configuration.md)). With `Grilling-partner` the chat is a grilling (see `POST /v1/grillings/{id}/confirm`) and `repository` is required. |
 | `message` | string | The first message, not blank, sent to the agent as it is, with no issue prompt around it. Optional: without it the chat waits for its first message (required with `continues`). |
+| `images` | array | Pictures the first message carries, for a model that looks at them: each `{"name": "...", "media_type": "image/png", "data": "<base64>"}`, where `name` is what the person's clipboard or file was called and optional. At most 6 to one message, each of at most 5 242 880 bytes, of kind `image/png`, `image/jpeg`, `image/gif` or `image/webp`. The bytes are kept under the chat (see `GET /v1/chats/{id}/images/{file}`) and the `said` event holds each picture's `name`, `media_type` and `file`. Optional. |
 | `model` | string | A model to run the chat on in place of the agent's, not blank. Optional. |
 | `thinking` | string | A reasoning level to run the chat with in place of the agent's: `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max` (the levels Pi-Bolt takes). Optional. |
 | `repository` | number | The id of a repository to work in. |
@@ -1332,7 +1337,9 @@ Response: the `Run` (`purpose` `chat`, `card_id` null). Errors: `404` no such re
 the message is blank or missing with `continues`, `model` is blank, `thinking` is not one of the levels, the agent does not exist, it is a built-in agent and neither its own `[agents.<name>]` nor
 `[agents.Coder]` is configured (the message says so), it is the Grilling partner and there is no `repository`, or
 `continues` is not a chat or has not ended (write to it with `POST /v1/chats/{id}/messages`), `origin` is none of `chat`,
-`assistant` and `automation`, `harness` is set together with `repository`, or `harness` is set and the server has no `[harness]`; `500` the worktree cannot be made.
+`assistant` and `automation`, `harness` is set together with `repository`, or `harness` is set and the server has no `[harness]`;
+the first message carries pictures the chat does not take (too many, too large, of another kind, not base64, or sent
+without a message), or the chat's model does not look at images; `500` the worktree cannot be made.
 
 ### `GET /v1/chats`
 
@@ -1348,13 +1355,26 @@ the agent as a prompt: when the agent is waiting it answers at once; when it is 
 is done with the current turn (a follow-up). To change what a working agent is doing, steer it with
 `POST /v1/runs/{id}/steer`.
 
-Request: `{"message": "...", "context": "..."}`; `message` is required and must not be blank. `context` is optional and
+Request: `{"message": "...", "images": [...], "context": "..."}`; `message` is required and must not be blank. `images`
+is optional and works as in `POST /v1/chats`. `context` is optional and
 works as in `POST /v1/chats`: the agent is told it before the message (secrets removed, at most 4 000 characters), and
-the `said` event holds only the message.
+the `said` event holds the message and the pictures, not their bytes.
 
-Response: the `Run`. Errors: `404` no such run; `422` the run is not a chat, the chat has ended, or the message is blank.
+Response: the `Run`. Errors: `404` no such run; `422` the run is not a chat, the chat has ended, the message is blank,
+the message carries pictures the chat does not take (too many, too large, of another kind, or not base64), or its
+model does not look at images.
 
 The chat is `running` from the request on, before the agent says it has started, until the agent has answered.
+
+### `GET /v1/chats/{id}/images/{file}`
+
+One of the pictures a chat's messages carried. The chat keeps the bytes of every picture it is sent under
+`chats/<run id>/images/`, named by what the bytes hold (`<sha256>.<extension>`), so a picture never changes once it is
+sent and no name reaches outside the chat. `{file}` is the `file` the message's `said` event gives; the person's own
+`name` is only in the event, never used as a path.
+
+Response: the bytes, with the `Content-Type` of their kind (`image/png`, `image/jpeg`, `image/gif` or `image/webp`) and
+`Cache-Control: public, max-age=31536000, immutable`. Errors: `404` no such chat, or it keeps no picture of that name.
 
 ### `POST /v1/chats/{id}/settings`
 
@@ -1873,7 +1893,10 @@ Moebius ends in failure has a `moebius_error` event instead.
 
 `seq` is the number the event is stored under, the same as in `GET /v1/runs/{id}/events`. Events of a run are published in
 the order of their `seq`. Every event of a run is published and stored: Pi's records, `tool_check`, `mcp_call` and `mcp_error` events, `steered` events
-(`{"message"}`, a person's steer, with secrets removed), `said` events (`{"message"}`, a person's message to a chat, the first
-one included, with secrets removed; stored before the agent's records of its answer) `shell_opened` events (`{"who"}`, a person opened a shell in the worktree; see `GET /v1/runs/{id}/terminal`), `tui_opened` events (`{"who"}`, a person opened Pi-Bolt's terminal interface in a chat; see `GET /v1/chats/{id}/tui`), `settings_changed` events (`{"model", "protocol", "thinking"}`, what a chat runs with in place of its agent's; see `POST /v1/chats/{id}/settings`) and `moebius_error` events (`{"message"}`) that explain why a
+(`{"message"}`, a person's steer, with secrets removed), `said` events (`{"message", "images"}`, a person's message to a
+chat, the first
+one included, with secrets removed; stored before the agent's records of its answer; `images`, absent without any, is one
+object per picture the message carried, `{"name", "media_type", "file"}`, where `name` is what the person's clipboard or
+file was called and `file` is the name to fetch the bytes with (see `GET /v1/chats/{id}/images/{file}`)) `shell_opened` events (`{"who"}`, a person opened a shell in the worktree; see `GET /v1/runs/{id}/terminal`), `tui_opened` events (`{"who"}`, a person opened Pi-Bolt's terminal interface in a chat; see `GET /v1/chats/{id}/tui`), `settings_changed` events (`{"model", "protocol", "thinking"}`, what a chat runs with in place of its agent's; see `POST /v1/chats/{id}/settings`) and `moebius_error` events (`{"message"}`) that explain why a
 run failed. The one exception is a run that was still going when the server stopped: it is failed at the next start with
 a `moebius_error` that is stored but not published.

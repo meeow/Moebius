@@ -10,7 +10,7 @@ use serde_json::json;
 
 use super::process::reasons;
 use super::{Closing, IDLE, Live, Paused, PiBolt, lock, send, shut_down};
-use crate::app::{App, ChatSettings};
+use crate::app::{App, ChatImage, ChatSettings};
 use crate::board::StartError;
 use crate::harness::run::{RunningRun, chat_agent, chat_run, finish, launch_or_undo};
 use crate::store::{Repository, Run};
@@ -67,7 +67,7 @@ impl PiBolt {
     pub(super) fn relaunch(&self, app: &Arc<App>, run: &RunningRun) -> Result<(), String> {
         let agent = app.run(run.id).map_err(|e| e.to_string())?.agent;
         let config = self.chat_config(app, run.id, &agent)?;
-        self.launch(app, None, &config, run.clone(), None)
+        self.launch(app, None, &config, run.clone(), (None, &[]))
     }
 
     /// Ends (`closing`) the chat `run_id` if it has no Pi of its own: on a thread of its own at once when it waited
@@ -99,7 +99,7 @@ impl PiBolt {
         app: &Arc<App>,
         agent: &str,
         place: (Option<&Repository>, bool),
-        (message, prompt): (Option<&str>, Option<&str>),
+        (message, images, prompt): (Option<&str>, &[ChatImage], Option<&str>),
         origin: &str,
         settings: &ChatSettings,
     ) -> Result<Run, StartError> {
@@ -110,12 +110,12 @@ impl PiBolt {
             &self.router,
             (agent, &config),
             place,
-            message,
+            (message, images),
             origin,
             settings,
         )?;
         launch_or_undo(app, &self.router, running, |run| {
-            self.launch(app, None, &config, run, prompt)
+            self.launch(app, None, &config, run, (prompt, images))
         })
     }
 
@@ -160,7 +160,7 @@ impl PiBolt {
 
     /// Tells the chat's Pi the person's `message`, starting it again first when the chat waited [`IDLE`]; false when
     /// the chat has ended.
-    pub(super) fn tell_chat(&self, run_id: i64, message: &str) -> bool {
+    pub(super) fn tell_chat(&self, run_id: i64, message: &str, images: &[ChatImage]) -> bool {
         // Held throughout, so that the chat is not paused while it is told the message.
         let mut paused = lock(&self.paused);
         // A chat that waited long gets its Pi again, on the same session.
@@ -180,10 +180,21 @@ impl PiBolt {
         *lock(&live.waiting_since) = None;
         // Pi starts a run for the prompt, or queues it when the agent is working, so the answer does not depend on
         // whether the agent has just settled.
-        send(
-            &live.stdin,
-            &json!({ "type": "prompt", "message": message, "streamingBehavior": "followUp" }),
-        )
+        let mut said =
+            json!({ "type": "prompt", "message": message, "streamingBehavior": "followUp" });
+        if !images.is_empty() {
+            said["images"] = json!(
+                images
+                    .iter()
+                    .map(|image| json!({
+                        "type": "image",
+                        "data": image.base64(),
+                        "mimeType": image.media_type,
+                    }))
+                    .collect::<Vec<_>>()
+            );
+        }
+        send(&live.stdin, &said)
     }
 
     /// Ends the chat: its Pi is asked to shut down, and the chat ends once it has. False when the chat has ended.
@@ -227,6 +238,7 @@ mod tests {
                 "Coder",
                 (Some(&repository), false),
                 Some("Hello"),
+                &[],
                 Some("Hello"),
                 "chat",
                 &ChatSettings::default(),
@@ -246,7 +258,7 @@ mod tests {
         assert_eq!(app.run(run.id).unwrap().status, "waiting");
 
         // The next message starts Pi again on the same session, and it answers.
-        app.say_in_chat(&pi, run.id, "Again", None).unwrap();
+        app.say_in_chat(&pi, run.id, "Again", &[], None).unwrap();
         let answered = |run: &Run| {
             run.status == "waiting"
                 && app
@@ -271,7 +283,7 @@ mod tests {
         assert!(lock(&pi.paused).contains_key(&run.id));
         app.end_chat(&pi, run.id).unwrap();
         assert_eq!(wait_until_ended(&app, run.id).status, "succeeded");
-        assert!(!pi.say(run.id, "Hello?"));
+        assert!(!pi.say(run.id, "Hello?", &[]));
     }
 
     /// Whether the process `pid` still runs: it exists and has not exited (a zombie has, it only waits to be reaped).
@@ -293,6 +305,7 @@ mod tests {
                 None,
                 false,
                 None,
+                &[],
                 None,
                 None,
                 None,
@@ -370,7 +383,7 @@ mod tests {
         assert!(lock(&pi.paused).contains_key(&run.id));
         app.change_chat_settings(&pi, run.id, (None, Some("medium"), &[]))
             .unwrap();
-        app.say_in_chat(&pi, run.id, "Hello", None).unwrap();
+        app.say_in_chat(&pi, run.id, "Hello", &[], None).unwrap();
         wait_for_run(&app, run.id, "the agent answers", |run| {
             run.status == "waiting" && app.store.answered_seq(run.id).unwrap() > 0
         });
@@ -392,6 +405,7 @@ mod tests {
                 None,
                 false,
                 Some("[hang]"),
+                &[],
                 None,
                 None,
                 None,
@@ -423,6 +437,7 @@ mod tests {
                 None,
                 false,
                 None,
+                &[],
                 None,
                 None,
                 None,

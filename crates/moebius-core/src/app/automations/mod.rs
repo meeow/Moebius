@@ -200,6 +200,7 @@ fn fire(app: &Arc<App>, runs: &dyn Runs, automation: &Automation, manual: bool) 
             automation.repository_id,
             automation.harness_repository,
             Some(&automation.prompt),
+            &[],
             None,
             None,
             Some(AUTOMATION_ORIGIN),

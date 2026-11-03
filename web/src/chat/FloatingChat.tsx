@@ -16,7 +16,9 @@ import { IconButton } from "../ui/components/IconButton";
 import { Composer } from "./Composer";
 import { isOpen, isWorking } from "./format";
 import { pageContext } from "./pageContext";
+import { type HeldPicture, holdPictures, imageBodies, takesImages } from "./pictures";
 import { ThreadView } from "./ThreadView";
+import { useChoices } from "./useChoices";
 import { useThread } from "./useThread";
 
 export const FLOATING_AGENT = "Moebius";
@@ -26,9 +28,11 @@ export function FloatingChat() {
   const location = useLocation();
   const snapshot = useQuery({ queryKey: keys.snapshot, queryFn: () => readSnapshot() });
   const chats = useQuery({ queryKey: keys.chats, queryFn: readChats });
+  const choices = useChoices();
   const [shown, setShown] = useState(false);
   const [chatId, setChatId] = useState<number | null>(null);
   const [message, setMessage] = useState("");
+  const [pictures, setPictures] = useState<HeldPicture[]>([]);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -37,6 +41,11 @@ export function FloatingChat() {
   const chat = chats.data?.find((each) => each.id === chatId);
   const going = chat !== undefined && isOpen(chat.status);
   const working = chat !== undefined && isWorking(chat.status);
+  const looks = takesImages(
+    choices.available,
+    chat?.model,
+    choices.agents.find((each) => each.name === FLOATING_AGENT)?.model ?? null,
+  );
 
   async function send() {
     const text = message.trim();
@@ -45,25 +54,35 @@ export function FloatingChat() {
     setError(null);
     setSent((n) => n + 1);
     const where = pageContext(location.pathname, snapshot.data);
+    const held = imageBodies(pictures);
     try {
       if (chatId !== null && going) {
-        await say(chatId, text, where.text);
+        await say(chatId, text, where.text, held);
       } else {
         const run = await startChat({
           agent: FLOATING_AGENT,
           message: text,
           context: where.text,
           origin: "assistant",
+          ...(held.length === 0 ? {} : { images: held }),
           ...(where.repository === null ? {} : { repository: where.repository }),
         });
         setChatId(run.id);
         await queryClient.invalidateQueries({ queryKey: keys.chats });
       }
       setMessage("");
+      setPictures([]);
     } catch (e) {
       setError(e instanceof Error ? e.message : "cannot send the message");
     }
     setSending(false);
+  }
+
+  /** Holds the pictures the person pasted or dropped, and says what it had to leave out. */
+  async function hold(files: File[]) {
+    const taken = await holdPictures(files, pictures.length);
+    if (taken.held.length > 0) setPictures((held) => [...held, ...taken.held]);
+    if (taken.refused.length > 0) setError(taken.refused[0] ?? null);
   }
 
   if (!shown) {
@@ -94,6 +113,7 @@ export function FloatingChat() {
           title="New conversation"
           onClick={() => {
             setChatId(null);
+            setPictures([]);
             setError(null);
           }}
         />
@@ -130,6 +150,13 @@ export function FloatingChat() {
         canSend={message.trim() !== "" && !sending}
         running={working}
         error={error}
+        pictures={looks === false ? [] : pictures}
+        onHold={looks === false ? undefined : (files) => void hold(files)}
+        onUnhold={
+          looks === false
+            ? undefined
+            : (picture) => setPictures((held) => held.filter((each) => each.key !== picture.key))
+        }
         placeholder="Ask the agent"
         autoFocus
       />

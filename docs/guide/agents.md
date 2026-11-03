@@ -477,6 +477,17 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/
   -d '{"thinking": "low"}' $API/v1/chats/$CHAT/settings
 ```
 
+A message can carry pictures as well as words, for a model that looks at them. `images` in both `POST /v1/chats` and
+`POST /v1/chats/{id}/messages` is a list of `{"name", "media_type", "data"}`, the bytes in base64, `name` what the
+person's clipboard or file was called; at most 6 to one message, each one of the four kinds a chat keeps and none too
+large for it. Which
+models take them is the `images` of `GET /v1/models/available`; a message with a picture to a chat whose model answers
+in words alone is refused (`422`), as is a picture of another kind or of too many bytes. The chat keeps the bytes
+itself, outside any worktree, so a pasted picture never lands in what the chat offers. `GET /v1/chats/{id}/images/{file}`
+gives the bytes back to show, and the `said` event names the file instead of repeating them. In the web app the
+paperclip, a paste into the field and a file dragged onto it all attach a picture, and the picture control is hidden for
+a model that cannot look at one.
+
 A chat is not ended in the desktop app: it waits for the next message as long as you like. One that has waited 30
 minutes, with no terminal open, has its Pi ended to free it, and stays `waiting`; the next message starts Pi again on the
 chat's own session, so the agent knows the whole conversation. The command line and the API still end a chat

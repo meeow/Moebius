@@ -10,23 +10,26 @@ import { useNavigate } from "react-router";
 import { startChat } from "../api/calls/chat";
 import { keys } from "../api/keys";
 import type { Snapshot } from "../api/types/board";
-import { type NewChat as NewChatBody, THINKING_LEVELS } from "../api/types/chat";
+import { type ChatImage, type NewChat as NewChatBody, THINKING_LEVELS } from "../api/types/chat";
 import { type PillOption, PillSelect } from "../ui/chat/PillSelect";
 import { Tag } from "../ui/chat/Tag";
 import { Composer } from "./Composer";
+import { type HeldPicture, holdPictures, imageBodies, takesImages } from "./pictures";
 import { useChoices } from "./useChoices";
 
 export const DEFAULT_AGENT = "Moebius";
 const GRILLING_AGENT = "Grilling-partner";
 export const HARNESS = "harness";
 
-/** What the chat to start is made of; `null` while it cannot start. */
+/** What the chat to start is made of; `null` while it cannot start. A first message carries `pictures` only for a
+ * model that looks at images, which is what the composer checked before offering them. */
 export function newChatBody(draft: {
   agent: string;
   repository: string;
   model: string;
   thinking: string;
   message: string;
+  pictures?: ChatImage[];
 }): NewChatBody | null {
   const message = draft.message.trim();
   if (message === "") return null;
@@ -34,6 +37,7 @@ export function newChatBody(draft: {
     return null;
   }
   const body: NewChatBody = { agent: draft.agent, message };
+  if (draft.pictures !== undefined && draft.pictures.length > 0) body.images = draft.pictures;
   if (draft.repository === HARNESS) body.harness = true;
   else if (draft.repository !== "") body.repository = Number(draft.repository);
   if (draft.model !== "") body.model = draft.model;
@@ -50,11 +54,22 @@ export function NewChat({ snapshot }: { snapshot: Snapshot | undefined }) {
   const [model, setModel] = useState("");
   const [thinking, setThinking] = useState("");
   const [message, setMessage] = useState("");
+  const [pictures, setPictures] = useState<HeldPicture[]>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const chosen = choices.agents.find((each) => each.name === agent);
-  const body = newChatBody({ agent, repository, model, thinking, message });
+  // The chat looks at pictures when the chosen model does, or the agent's model without a choice; a model the server
+  // does not list is left to the server, which asks the harness rather than refusing here.
+  const looks = takesImages(choices.available, model, chosen?.model ?? null);
+  const body = newChatBody({
+    agent,
+    repository,
+    model,
+    thinking,
+    message,
+    pictures: looks === false ? [] : imageBodies(pictures),
+  });
   const needsRepository = agent === GRILLING_AGENT && body === null && message.trim() !== "";
 
   async function send() {
@@ -69,6 +84,13 @@ export function NewChat({ snapshot }: { snapshot: Snapshot | undefined }) {
       setError(e instanceof Error ? e.message : "cannot start the chat");
       setSending(false);
     }
+  }
+
+  /** Holds the pictures the person pasted, dropped or picked, and says what it had to leave out. */
+  async function hold(files: File[]) {
+    const taken = await holdPictures(files, pictures.length);
+    if (taken.held.length > 0) setPictures((held) => [...held, ...taken.held]);
+    if (taken.refused.length > 0) setError(taken.refused[0] ?? null);
   }
 
   const agentOptions: PillOption[] = (
@@ -96,11 +118,13 @@ export function NewChat({ snapshot }: { snapshot: Snapshot | undefined }) {
 
   const note = needsRepository
     ? "A grilling needs a repository: choose one below."
-    : repository === HARNESS
-      ? 'The agent works on a branch of the harness configuration repository: agents, skills, extensions, MCP servers and rules. "Offer changes" offers what it built as a change.'
-      : agent === GRILLING_AGENT
-        ? "The Grilling partner questions your idea in a repository. Ending the chat puts the issues it proposes in the Inbox, to confirm."
-        : 'With a repository the agent works on its own branch. "Offer changes" offers what it built as a change.';
+    : looks === false
+      ? "This model answers in words only, so the message cannot carry a picture. Choose one that looks at them, under Model."
+      : repository === HARNESS
+        ? 'The agent works on a branch of the harness configuration repository: agents, skills, extensions, MCP servers and rules. "Offer changes" offers what it built as a change.'
+        : agent === GRILLING_AGENT
+          ? "The Grilling partner questions your idea in a repository. Ending the chat puts the issues it proposes in the Inbox, to confirm."
+          : 'With a repository the agent works on its own branch. "Offer changes" offers what it built as a change.';
 
   return (
     <div className="flex min-h-0 flex-1 flex-col justify-end gap-[14px]" data-testid="new-chat">
@@ -123,6 +147,13 @@ export function NewChat({ snapshot }: { snapshot: Snapshot | undefined }) {
         onSend={() => void send()}
         canSend={body !== null && !sending}
         error={error}
+        pictures={looks === false ? [] : pictures}
+        onHold={looks === false ? undefined : (files) => void hold(files)}
+        onUnhold={
+          looks === false
+            ? undefined
+            : (picture) => setPictures((held) => held.filter((each) => each.key !== picture.key))
+        }
         autoFocus
         pills={
           <>

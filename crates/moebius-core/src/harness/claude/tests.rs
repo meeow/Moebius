@@ -339,6 +339,7 @@ fn a_chat_on_claude_code_waits_between_messages_resumes_its_session_for_another_
             "Coder",
             (Some(&repository), false),
             Some("Hello"),
+            &[],
             Some("Hello"),
             "chat",
             &ChatSettings::default(),
@@ -351,7 +352,7 @@ fn a_chat_on_claude_code_waits_between_messages_resumes_its_session_for_another_
     let session = first[first.iter().position(|a| a == "--session-id").unwrap() + 1].clone();
 
     s.app
-        .say_in_chat(&s.claude, run.id, "[write notes.txt] Again", None)
+        .say_in_chat(&s.claude, run.id, "[write notes.txt] Again", &[], None)
         .unwrap();
     let answered = |run: &Run| {
         run.status == "waiting"
@@ -388,7 +389,7 @@ fn a_chat_on_claude_code_waits_between_messages_resumes_its_session_for_another_
     s.app.end_chat(&s.claude, run.id).unwrap();
     let run = wait_until_ended(&s.app, run.id);
     assert_eq!(run.status, "succeeded");
-    assert!(!s.claude.say(run.id, "Hello?"));
+    assert!(!s.claude.say(run.id, "Hello?", &[]));
     // What it wrote is on the chat's branch.
     let clone = PathBuf::from(&repository.path);
     let shown = git(
