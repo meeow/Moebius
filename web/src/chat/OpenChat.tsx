@@ -37,7 +37,7 @@ import { FadedLine } from "../ui/page/FadedLine";
 import { Notice } from "../ui/page/Notice";
 import { Composer } from "./Composer";
 import { draftKey, readDraft, saveDraft } from "./drafts";
-import { endedHint, isOpen, isWorking, statusTag } from "./format";
+import { endedHint, isOpen, isWorking, statusTag, takesMessage } from "./format";
 import { offeredChange, placeName } from "./places";
 import { seqToMark } from "./readMarkers";
 import { Starters } from "./Starters";
@@ -350,6 +350,9 @@ export function OpenChat({
 
   const open = isOpen(chat.status);
   const working = isWorking(chat.status);
+  // A chat whose agent went away still takes a message: that chat is taken up again, told what was said in it, so the
+  // person goes on where they are rather than in a new chat.
+  const writesHere = takesMessage(chat.status);
 
   // Pi-Bolt's own terminal interface takes the place of the conversation; the top bar's button brings it back.
   if (open && params.get("terminal") === "1") {
@@ -371,11 +374,14 @@ export function OpenChat({
     onNotice(null);
     setSent((n) => n + 1);
     try {
-      if (open) {
+      if (writesHere) {
         await say(chat.id, text);
         clear(text);
+        // Taking a chat up again says something new in its tag and in the list of chats, so both are read again
+        // instead of waiting for the events to say so.
+        if (!open) await queryClient.invalidateQueries({ queryKey: keys.chats });
       } else {
-        // Writing to an ended chat goes on in a new chat that is told this one.
+        // A chat that ended for good goes on in a new chat that is told this one.
         const run = await continueChat(chat.id, text);
         clear(text);
         await queryClient.invalidateQueries({ queryKey: keys.chats });
@@ -447,14 +453,14 @@ export function OpenChat({
         onChange={write}
         onSend={() => void send()}
         canSend={message.trim() !== "" && !sending}
-        // An ended chat takes no message, so the button says what pressing it really does: it starts a chat that
-        // carries this one on. The tag in the title row is still the only place the state itself is said.
-        sendLabel={open ? "Send" : "Continue"}
-        sendTitle={open ? undefined : "Starts a new chat, told what was said in this one"}
+        // A chat that takes no message says on the button what pressing it really does: it starts a chat that carries
+        // this one on. The tag in the title row is still the only place the state itself is said.
+        sendLabel={writesHere ? "Send" : "Continue"}
+        sendTitle={writesHere ? undefined : "Starts a new chat, told what was said in this one"}
         // The field names who the message goes to, which is what the agent pill used to say and is the one thing
-        // worth reading there. An ended chat has nothing to write to, so the field says why, and what the button does
-        // about it.
-        placeholder={open ? `Write to ${chat.agent}` : endedHint(chat.status, chat.agent)}
+        // worth reading there. A chat that takes no message has nobody to write to, so the field says why, and what
+        // the button does about it.
+        placeholder={writesHere ? `Write to ${chat.agent}` : endedHint(chat.status, chat.agent)}
         pills={
           <>
             <Tag>{place ?? "no repository"}</Tag>

@@ -124,6 +124,15 @@ impl HarnessRepo {
             .add_chat_worktree("harness", &self.path, run_id, &base)?)
     }
 
+    /// Makes the worktree of the chat `run_id` again on the branch it already has, after its agent went away and its
+    /// worktree was removed with it.
+    pub fn reuse_chat_worktree(&self, app: &App, run_id: i64) -> Result<crate::repos::Worktree> {
+        let _read_at = self.lock();
+        Ok(app
+            .repos
+            .reuse_chat_worktree("harness", &self.path, run_id)?)
+    }
+
     fn check_branch(
         &self,
         app: &App,

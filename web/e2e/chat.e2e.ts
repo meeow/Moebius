@@ -572,7 +572,7 @@ describe("an open chat", () => {
   });
 
   it.skipIf(usesRealServer)(
-    "stops after asking, and writes to an ended chat in a new one",
+    "stops after asking, and its next message takes the same chat up again",
     async () => {
       await open("/chat");
       fake().autoAnswer = false;
@@ -586,16 +586,23 @@ describe("an open chat", () => {
       await page.getByRole("button", { name: "Stop" }).click();
       await page.getByRole("button", { name: "Stop chat" }).click();
       await page.getByTestId("chat-title").waitFor();
-      // The tag carries the state in words and the empty field carries the way on; nothing is added under it.
+      // The tag carries the state in words, and the field still takes a message: the way on is this chat, not a new
+      // one, so nothing about the composer says otherwise.
       await page.getByText("Agent disconnected", { exact: true }).first().waitFor();
-      expect(await page.getByText("This chat has ended").count()).toBe(0);
-      const field = page.getByRole("textbox", { name: "Message" });
-      expect(await field.getAttribute("placeholder")).toBe(
-        "Moebius disconnected. Start a new chat to continue.",
-      );
-      // The button beside the field is where the way on is offered: an ended chat's message starts a new chat.
-      expect(await page.getByRole("button", { name: "Continue" }).count()).toBe(1);
+      expect(await field().getAttribute("placeholder")).toBe("Write to Moebius");
+      expect(await page.getByRole("button", { name: "Continue" }).count()).toBe(0);
       expect(fake().chats[0]?.status).toBe("stopped");
+
+      // Writing goes to the chat that is open: it is taken up again, on the record already on screen.
+      fake().autoAnswer = true;
+      const chatUrl = page.url();
+      await say("Carry on");
+      await page.getByText("You said: Carry on").waitFor();
+      expect(page.url()).toBe(chatUrl);
+      expect(fake().chats.length).toBe(1);
+      expect(fake().chats[0]?.status).toBe("waiting");
+      await page.getByTestId("chat-title").waitFor();
+      expect(await page.getByText("Agent disconnected", { exact: true }).count()).toBe(0);
     },
   );
 });

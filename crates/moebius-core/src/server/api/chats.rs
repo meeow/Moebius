@@ -585,7 +585,23 @@ mod tests {
         assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists());
         assert!(!app.data_dir.join(format!("chats/{}", waiting.id)).exists());
         assert_eq!(stop(waiting.id).await.status(), 422);
-        assert_eq!(say(&state, &addr, waiting.id, "Hello?").await.status(), 422);
+        // What is written to a chat whose agent went away takes it up again, on the record a person is reading.
+        let taken = say(&state, &addr, waiting.id, "Hello?").await;
+        assert_eq!(taken.status(), 200);
+        let again: Run = taken.json().await.unwrap();
+        assert_eq!(again.id, waiting.id, "the chat a person wrote to, not a new one");
+        assert_eq!(again.ended_at, None, "the chat is no longer ended");
+        assert_eq!(app.chats(false).unwrap().len(), 1, "no second chat");
+        until(
+            "the chat's place is back",
+            || app.data_dir.join(format!("chats/{}", waiting.id)).is_dir(),
+        )
+        .await;
+        assert_eq!(stop(waiting.id).await.status(), 200);
+        until("the chat is stopped again", || {
+            status(app, waiting.id) == "stopped"
+        })
+        .await;
 
         // A chat whose agent is working takes a message as a follow-up, and a stop aborts the turn.
         let started = post(

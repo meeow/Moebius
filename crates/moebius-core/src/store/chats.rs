@@ -50,6 +50,16 @@ impl Store {
         Ok(())
     }
 
+    /// Picks up a chat that ended when its agent went away: it works from now on and is no longer ended, so that what
+    /// the person writes next belongs to it again.
+    pub fn reopen_chat(&self, id: i64) -> Result<()> {
+        self.conn().execute(
+            "UPDATE runs SET status = 'running', ended_at = NULL WHERE id = ?1",
+            [id],
+        )?;
+        Ok(())
+    }
+
     pub fn set_run_repository(&self, id: i64, repository_id: i64) -> Result<()> {
         self.conn().execute(
             "UPDATE runs SET repository_id = ?1 WHERE id = ?2",

@@ -189,7 +189,10 @@ like the iced app and does not know anything the API does not say.
     it. The same `Reader` reads a chat, with one difference: at `agent_settled` the chat does not end but becomes
     `waiting` (`running` again at the next `agent_start`). `POST /v1/chats/{id}/messages` (`App::say_in_chat`) stores a
     `said` event and sends a `prompt` with `streamingBehavior: "followUp"` (`ChatRuns::say`), which Pi starts or queues
-    depending on whether the agent is working. Steer and stop are the run's own routes; a stop of a chat also closes Pi's
+    depending on whether the agent is working. A message to a chat that is `stopped`, whose agent went away, takes that
+    chat up again instead of losing it: `App::wake_chat` ends it no longer (`Store::reopen_chat`) and
+    `ChatRuns::wake` makes its worktree again on the branch it already has (`Repos::reuse_chat_worktree`) and starts Pi
+    with what was said in the chat before (`lifecycle::woken_chat`), capped the way a continuing chat's conversation is. Steer and stop are the run's own routes; a stop of a chat also closes Pi's
     standard input, since a waiting chat has no turn to abort. `POST /v1/chats/{id}/end` (`App::end_chat`,
     `ChatRuns::end`) closes Pi's standard input. When Pi has exited the chat is committed on its branch (nothing changed is
     no failure), the worktree or directory is removed, and the run is `succeeded` (`stopped` after a stop). Before the status

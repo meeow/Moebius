@@ -161,6 +161,10 @@ impl ChatRuns for Harnesses {
         self.claude_code.say(run_id, message) || self.pi_bolt.say(run_id, message)
     }
 
+    fn wake(&self, app: &Arc<App>, run_id: i64, prompt: &str) -> Result<(), String> {
+        self.of_run(app, run_id).wake(app, run_id, prompt)
+    }
+
     fn end(&self, run_id: i64) -> bool {
         self.claude_code.end(run_id) || self.pi_bolt.end(run_id)
     }

@@ -25,12 +25,12 @@ export function statusTag(status: string, asks: boolean): { label: string; tone:
 }
 
 /**
- * What the field says for a chat that takes no message: why it takes none, and what starts one again. The tag in
- * the title row names the state; the field answers the question the person is actually asking — can I go on here?
+ * What the field says for a chat that takes no message: why it takes none, and what starts one again. The tag in the
+ * title row names the state; the field answers the question the person is actually asking — can I go on here? A chat
+ * whose agent went away is not here: the next message starts that agent again in the same chat (see `takesMessage`).
  */
 export function endedHint(status: string, agent: string): string {
   const gone: Record<string, string> = {
-    stopped: `${agent} disconnected`,
     failed: `${agent} stopped answering`,
     succeeded: `${agent} ended this chat`,
   };
@@ -40,6 +40,14 @@ export function endedHint(status: string, agent: string): string {
 /** Whether a chat can still be written to. */
 export function isOpen(status: string): boolean {
   return status === "starting" || status === "running" || status === "waiting";
+}
+
+/**
+ * Whether a message written to the chat belongs to it: while its agent is up, and after the agent went away — then
+ * the chat is taken up again, told what was said in it, rather than being left behind for a new chat.
+ */
+export function takesMessage(status: string): boolean {
+  return isOpen(status) || status === "stopped";
 }
 
 /** Whether the chat's agent is at work. */

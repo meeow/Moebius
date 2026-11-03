@@ -1,7 +1,7 @@
 //! What a run holds from its start to its end, the same for every harness: the run recorded, its worktree and its
-//! token (`card_run` for a card, `detached_run` for the Retro analyst and the Autoresearcher, `chat_run` for a chat),
-//! what is done to undo it when its process cannot be started (`launch_or_undo`), and `RunningRun`, which keeps it
-//! until the run ends (see `end`).
+//! token (`card_run` for a card, `detached_run` for the Retro analyst and the Autoresearcher, `chat_run` for a chat,
+//! `woken_chat` for a chat taken up again after its agent went away), what is done to undo it when its process cannot
+//! be started (`launch_or_undo`), and `RunningRun`, which keeps it until the run ends (see `end`).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -339,6 +339,55 @@ pub(in crate::harness) fn chat_run(
         let _ = app.record_run_event(run.id, "settings_changed", &json!(settings));
     }
     Ok(running)
+}
+
+/// Makes again what the chat `stored` had before its agent went away: its worktree on the branch it already has, or the
+/// empty directory that was removed with it, and a token of its own. The chat keeps its record, so what the person
+/// writes next belongs to the chat they are reading; what its harness is told (`prompt`) carries what was said before.
+/// A chat whose agent went on a runner is woken on the server, where its records are.
+pub(in crate::harness) fn woken_chat(
+    app: &App,
+    router: &Router,
+    stored: &Run,
+    config: &AgentConfig,
+) -> Result<RunningRun, String> {
+    let id = stored.id;
+    let (clone, worktree, start) = if let Some(repository) = stored.repository_id {
+        let repository = app.repository(repository).map_err(|e| e.to_string())?;
+        let clone = PathBuf::from(&repository.path);
+        let made = app
+            .repos
+            .reuse_chat_worktree(&repository.name, &clone, id)
+            .map_err(|e| e.to_string())?;
+        let start = head(app, id, &made.path).map_err(|e| e.to_string())?;
+        (Some(clone), made.path, start)
+    } else if stored.harness_repository {
+        let repo = app.harness_repo().map_err(|e| e.to_string())?;
+        let made = repo
+            .reuse_chat_worktree(app, id)
+            .map_err(|e| e.to_string())?;
+        let start = head(app, id, &made.path).map_err(|e| e.to_string())?;
+        (Some(repo.path().to_path_buf()), made.path, start)
+    } else {
+        let empty = app.data_dir.join("chats").join(id.to_string());
+        std::fs::create_dir_all(&empty).map_err(|e| e.to_string())?;
+        (None, empty, String::new())
+    };
+    let grant = Grant {
+        run_id: id,
+        card_id: None,
+        budget: config.token_budget,
+    };
+    Ok(RunningRun {
+        id,
+        clone,
+        start,
+        worktree,
+        token: issue_token(router, config, grant),
+        purpose: "chat".into(),
+        commit_message: format!("Chat {id}\n\nCommitted by Moebius when the chat ended."),
+        remote: None,
+    })
 }
 
 /// Starts the process of the run `running` with `launch` and returns the run; when the process cannot be started, what

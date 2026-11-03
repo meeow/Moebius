@@ -210,7 +210,7 @@ mod tests {
 
     use super::*;
     use crate::app::AppError;
-    use crate::board::ChatRuns;
+    use crate::board::{CardRuns, ChatRuns};
     use crate::decide::Actor;
     use crate::harness::pibolt::testing::{
         argv_and_stdin, flag, setup, wait_for, wait_for_run, wait_until_ended,
@@ -495,5 +495,119 @@ mod tests {
         assert_eq!(app.chat_settings(run.id).unwrap().protocol, None);
         app.end_chat(&pi, run.id).unwrap();
         wait_until_ended(&app, run.id);
+    }
+
+    #[test]
+    fn writing_to_a_chat_whose_agent_went_on_takes_it_up_again_with_what_was_said() {
+        let (_dir, app, pi, repo) = setup();
+        let repository = app.repository(repo).unwrap();
+        let run = pi
+            .start_chat(
+                &app,
+                "Coder",
+                (Some(&repository), false),
+                Some("Hello"),
+                Some("Hello"),
+                "chat",
+                &ChatSettings::default(),
+            )
+            .unwrap();
+        let settled = |count: usize| {
+            let store = app.store.clone();
+            move |run: &Run| {
+                run.status == "waiting"
+                    && store
+                        .events(run.id)
+                        .unwrap()
+                        .iter()
+                        .filter(|event| event.kind == "agent_settled")
+                        .count()
+                        == count
+            }
+        };
+        wait_for_run(&app, run.id, "the agent answers", settled(1));
+        // What was said gets long, so that only its end can go to the agent again.
+        let long = format!("{} END OF WHAT WAS SAID", "q".repeat(30_000));
+        app.say_in_chat(&pi, run.id, &long, None).unwrap();
+        wait_for_run(&app, run.id, "the agent answers again", settled(2));
+
+        // What the chat leaves in its worktree is committed when its agent goes away; the worktree goes with it.
+        let worktree = run.worktree.expect("the chat works in a repository");
+        let left = std::path::Path::new(&worktree).join("left.txt");
+        std::fs::write(&left, "kept\n").unwrap();
+        assert!(pi.stop(run.id));
+        let ended = wait_until_ended(&app, run.id);
+        assert_eq!(ended.status, "stopped");
+        assert!(
+            !std::path::Path::new(&worktree).exists(),
+            "the worktree went with the agent"
+        );
+
+        // The person writes again: the chat they are reading is taken up, and no second chat is started.
+        let again = app.say_in_chat(&pi, run.id, "Carry on", None).unwrap();
+        assert_eq!(again.id, ended.id, "the same chat");
+        assert_eq!(again.ended_at, None, "the chat is no longer ended");
+        assert_eq!(app.chats(false).unwrap().len(), 1, "no second chat");
+        assert_eq!(
+            std::fs::read_to_string(&left).unwrap(),
+            "kept\n",
+            "its branch is back where its agent left it"
+        );
+
+        wait_for_run(&app, run.id, "the agent answers the next message", settled(3));
+
+        // Its agent is told what was said, cut to the last of it, in a session of its own rather than Pi's.
+        let agent_dir = app.data_dir.join(format!("runs/{}/agent", run.id));
+        let told = std::fs::read_to_string(agent_dir.join("prompt.txt")).unwrap();
+        assert!(
+            told.starts_with("This chat continues an earlier one"),
+            "{told}"
+        );
+        assert!(
+            told.contains("END OF WHAT WAS SAID"),
+            "the end of what was said is kept"
+        );
+        assert!(told.ends_with("Carry on"), "{told}");
+        assert!(
+            told.len() <= 21_000,
+            "what was said is capped, not handed over whole ({} characters)",
+            told.len()
+        );
+        let argv = std::fs::read_to_string(agent_dir.join("argv.json")).unwrap();
+        assert!(!argv.contains("--continue"), "{argv}");
+        let said: Vec<_> = app
+            .store
+            .events(run.id)
+            .unwrap()
+            .into_iter()
+            .filter(|event| event.kind == "said")
+            .collect();
+        assert_eq!(said.len(), 3, "the message belongs to this chat");
+    }
+
+    #[test]
+    fn writing_to_a_chat_that_was_ended_keeps_it_ended() {
+        let (_dir, app, pi, repo) = setup();
+        let repository = app.repository(repo).unwrap();
+        let run = pi
+            .start_chat(
+                &app,
+                "Coder",
+                (Some(&repository), false),
+                Some("Hello"),
+                Some("Hello"),
+                "chat",
+                &ChatSettings::default(),
+            )
+            .unwrap();
+        wait_for_run(&app, run.id, "the agent answers", |run| run.status == "waiting");
+        wait_until_ended_after_end(&app, &pi, run.id);
+
+        let why = app.say_in_chat(&pi, run.id, "Hello?", None).unwrap_err();
+        assert!(format!("{why}").contains("has ended"), "{why}");
+        let run = app.run(run.id).unwrap();
+        assert_eq!(run.status, "succeeded", "the chat stays as it ended");
+        assert!(run.ended_at.is_some());
+        assert!(lock(&pi.live).is_empty(), "nothing was started again");
     }
 }

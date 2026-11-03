@@ -39,7 +39,7 @@ use crate::harness::remote::Runners;
 use crate::harness::run::{
     AUTORESEARCHER_AGENT, Launching, RETRO_AGENT, RunningRun, agent_list, chat_run, finish,
     has_agent, keep, launch_or_undo, resolve_agent, start_card, start_detached, start_trial,
-    tell_where_moebius_runs,
+    tell_where_moebius_runs, woken_chat,
 };
 use crate::router::Router;
 use crate::store::{Card, Repository, Run};
@@ -333,6 +333,32 @@ impl ChatRuns for ClaudeCode {
                 },
             )
         })
+    }
+
+    /// The chat's worktree and token are made again, and a Claude Code is started on a new session with what was said
+    /// before, which is how every Claude Code chat starts.
+    fn wake(&self, app: &Arc<App>, run_id: i64, prompt: &str) -> Result<(), String> {
+        let stored = app.run(run_id).map_err(|e| e.to_string())?;
+        let settings = app.chat_settings(run_id).map_err(|e| e.to_string())?;
+        let config = on_claude_code(
+            settings.apply(&self.agent(app, &stored.agent).map_err(|e| e.to_string())?),
+            &stored.agent,
+        )
+        .map_err(|e| e.to_string())?;
+        let running = woken_chat(app, &self.router, &stored, &config)?;
+        launch_or_undo(app, &self.router, running, |run| {
+            self.launch_for(
+                app,
+                Launching {
+                    config: &config,
+                    run,
+                    card: None,
+                    prompt: Some(prompt),
+                },
+            )
+        })
+        .map(|_| ())
+        .map_err(|e| e.to_string())
     }
 
     /// A chat given another model gets a new Claude Code on the same session; another reasoning level changes nothing.

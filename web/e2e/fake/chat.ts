@@ -344,7 +344,12 @@ export function createFakeChat(
             said.push({ chat: id, body });
             const message = typeof body.message === "string" ? body.message : "";
             if (message.trim() === "") return reply(response, 422, "the message is blank");
-            if (!["starting", "running", "waiting"].includes(chat.status)) {
+            if (chat.status === "stopped") {
+              // A chat whose agent went away is taken up again by the message, on the record it already has.
+              chat.status = "running";
+              chat.ended_at = null;
+              broadcast({ kind: "run_started", data: { run: id, card: null } });
+            } else if (!["starting", "running", "waiting"].includes(chat.status)) {
               return reply(response, 422, "the chat has ended");
             }
             chat.status = "running";

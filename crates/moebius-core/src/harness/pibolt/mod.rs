@@ -64,7 +64,9 @@ use tui::Follower;
 pub use crate::harness::run::{
     AUTORESEARCHER_AGENT, BuiltInAgent, GRILLING_AGENT, MOEBIUS_AGENT, RETRO_AGENT, built_in_agent,
 };
-use crate::harness::run::{Launching, RunningRun, start_card, start_detached, start_trial};
+use crate::harness::run::{
+    Launching, RunningRun, launch_or_undo, start_card, start_detached, start_trial, woken_chat,
+};
 pub(crate) use crate::harness::run::{
     agent_list, chat_agent, final_answer, has_agent, resolve_agent, tell_where_moebius_runs,
 };
@@ -399,6 +401,19 @@ impl ChatRuns for PiBolt {
 
     fn say(&self, run_id: i64, message: &str) -> bool {
         self.tell_chat(run_id, message)
+    }
+
+    /// The chat's worktree and token are made again, and a Pi is started with what was said before, so that the chat
+    /// carries on without being a new one.
+    fn wake(&self, app: &Arc<App>, run_id: i64, prompt: &str) -> Result<(), String> {
+        let stored = app.run(run_id).map_err(|e| e.to_string())?;
+        let config = self.chat_config(app, run_id, &stored.agent)?;
+        let running = woken_chat(app, &self.router, &stored, &config)?;
+        launch_or_undo(app, &self.router, running, |run| {
+            self.launch(app, None, &config, run, Some(prompt))
+        })
+        .map(|_| ())
+        .map_err(|e| e.to_string())
     }
 
     fn end(&self, run_id: i64) -> bool {

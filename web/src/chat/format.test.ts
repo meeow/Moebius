@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { endedHint, isOpen, isWorking, statusTag } from "./format";
+import { endedHint, isOpen, isWorking, statusTag, takesMessage } from "./format";
 import { pageContext } from "./pageContext";
 
 describe("statusTag", () => {
@@ -21,13 +21,20 @@ describe("statusTag", () => {
     ]);
     expect([isWorking("starting"), isWorking("waiting")]).toEqual([true, false]);
   });
+
+  it("takes a message again once the agent has gone away", () => {
+    // The chat a person is reading is taken up by their next message; only a chat that ended for good sends them on.
+    expect([takesMessage("waiting"), takesMessage("stopped"), takesMessage("succeeded")]).toEqual([
+      true,
+      true,
+      false,
+    ]);
+    expect([takesMessage("starting"), takesMessage("failed")]).toEqual([true, false]);
+  });
 });
 
 describe("endedHint", () => {
   it("names the agent, the state, and the way on", () => {
-    expect(endedHint("stopped", "Moebius")).toBe(
-      "Moebius disconnected. Start a new chat to continue.",
-    );
     expect(endedHint("succeeded", "Coder")).toBe(
       "Coder ended this chat. Start a new chat to continue.",
     );

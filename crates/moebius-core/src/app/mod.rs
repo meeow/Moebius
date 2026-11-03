@@ -173,7 +173,7 @@ impl App {
     }
 
     /// The harness configuration repository; refused when the server has none.
-    fn harness_repo(&self) -> Result<&Arc<HarnessRepo>> {
+    pub(crate) fn harness_repo(&self) -> Result<&Arc<HarnessRepo>> {
         self.harness_repo.get().ok_or_else(|| {
             AppError::Invalid(
                 "the server has no harness configuration repository ([harness])".into(),

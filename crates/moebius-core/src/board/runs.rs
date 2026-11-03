@@ -171,6 +171,11 @@ pub trait ChatRuns: Send + Sync {
     /// chat is not running.
     fn say(&self, run_id: i64, message: &str) -> bool;
 
+    /// Starts the agent of the chat `run_id` again, after it went away and the chat ended as `stopped`: the same chat,
+    /// on the branch and in the place it had, with `prompt` — what was said in the chat before, and what the person
+    /// writes now. The chat works from now on; why its agent cannot start again is the error.
+    fn wake(&self, app: &Arc<App>, run_id: i64, prompt: &str) -> Result<(), String>;
+
     /// Ends a chat: its agent is shut down and its work kept. False when the chat is not running.
     fn end(&self, run_id: i64) -> bool;
 }

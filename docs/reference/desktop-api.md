@@ -1486,16 +1486,23 @@ keep working and "Open in Chat" can show one. Response: an array of `Chat`. A ch
 
 ### `POST /v1/chats/{id}/messages`
 
-A person writes to a chat that has not ended. The message is stored as a `said` run event (secrets removed) and sent to
-the agent as a prompt: when the agent is waiting it answers at once; when it is working the message is delivered when it
-is done with the current turn (a follow-up). To change what a working agent is doing, steer it with
-`POST /v1/runs/{id}/steer`.
+A person writes to a chat. The message is stored as a `said` run event (secrets removed) and sent to the agent as a
+prompt: when the agent is waiting it answers at once; when it is working the message is delivered when it is done with
+the current turn (a follow-up). To change what a working agent is doing, steer it with `POST /v1/runs/{id}/steer`.
+
+A chat that ended because its agent went away (`status` `stopped`) is taken up again by the message, so that a person
+carries on in the chat they are reading rather than starting a new one: the same `Run` is no longer ended (`ended_at`
+null, `status` `running`), its worktree is made again on the branch it already has (for a chat with no repository, its
+empty directory is simply made again), and its agent starts on a prompt that holds what was said in the chat before — at
+most the last 20 000 characters of it — and then the message. A chat that ended any other
+way (`succeeded`, `failed`) is ended for good and is continued by a new chat (`POST /v1/chats` with `continues`).
 
 Request: `{"message": "...", "context": "..."}`; `message` is required and must not be blank. `context` is optional and
 works as in `POST /v1/chats`: the agent is told it before the message (secrets removed, at most 4 000 characters), and
 the `said` event holds only the message.
 
-Response: the `Run`. Errors: `404` no such run; `422` the run is not a chat, the chat has ended, or the message is blank.
+Response: the `Run`. Errors: `404` no such run; `422` the run is not a chat, the chat has ended for good, its agent
+cannot start again, it is the Grilling partner (its issues are already read), or the message is blank.
 
 The chat is `running` from the request on, before the agent says it has started, until the agent has answered.
 
