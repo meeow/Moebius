@@ -70,7 +70,7 @@ export function KanbanIssuePanel({
     <section
       aria-label="Card inspector"
       className={cn(
-        "flex h-full max-h-screen min-h-0 flex-col overflow-hidden rounded-sheet bg-surface shadow-card outline-none xl:rounded-none xl:border-l xl:border-hairline xl:shadow-none",
+        "flex h-full max-h-screen min-h-0 flex-col overflow-hidden rounded-sheet bg-surface shadow-card outline-none lg:rounded-none lg:border-l lg:border-hairline lg:shadow-none",
         className,
       )}
       onKeyDown={handleKeyDown}

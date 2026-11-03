@@ -552,6 +552,56 @@ describe("the dock", () => {
     await column("Not started").waitFor();
     expect(await dock().count()).toBe(0);
   });
+
+  it.skipIf(usesRealServer)(
+    "keeps the dock a drawer in a window narrower than the one it was drawn in",
+    async () => {
+      await fresh();
+      await openBoard();
+      // A window narrower than the columns were first laid out for, but wide enough for two of them beside a dock of
+      // its own width. The dock is the page's own inspector, so it keeps that shape here rather than dropping under
+      // the board and becoming a card someone has to scroll to.
+      await page.setViewportSize({ width: 1_200, height: 800 });
+      await card(3).click();
+      await dock().getByRole("heading", { name: "Document the API" }).waitFor();
+      const drawer = await dock().evaluate((element) => {
+        const box = element.getBoundingClientRect();
+        const face = getComputedStyle(element);
+        return {
+          held: getComputedStyle(element.parentElement as Element).position,
+          top: box.top,
+          height: box.height,
+          fromRight: document.documentElement.clientWidth - box.right,
+          width: box.width,
+          radius: face.borderTopLeftRadius,
+          spill: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        };
+      });
+      expect(
+        drawer.held,
+        "the dock is not pinned to the window, so it scrolls away with the board",
+      ).toBe("fixed");
+      expect(drawer.top, "the dock does not run to the top edge").toBe(0);
+      expect(drawer.height, "the dock does not run to the bottom edge").toBe(800);
+      expect(drawer.fromRight, "the dock is not flush to the right edge").toBe(0);
+      expect(drawer.width, "the dock is not the width it holds in the page").toBe(384);
+      expect(drawer.radius, "a panel that is part of the page is not drawn as a sheet").toBe("0px");
+      expect(
+        drawer.spill,
+        "the board is pushed out of the window beside the dock",
+      ).toBeLessThanOrEqual(0);
+      // Under the width where the board has no room left beside a fixed panel, the dock takes the row under it.
+      await page.setViewportSize({ width: 900, height: 800 });
+      const block = await dock().evaluate((element) => ({
+        held: getComputedStyle(element.parentElement as Element).position,
+        top: element.getBoundingClientRect().top,
+      }));
+      expect(block.held, "a dock with no board beside it is pinned over the page").not.toBe(
+        "fixed",
+      );
+      expect(block.top, "the dock is still laid where the board is read").toBeGreaterThan(0);
+    },
+  );
 });
 
 /** One of the page's own choices: open it and take the row that shows `option`. */

@@ -185,7 +185,7 @@ export function BoardPage() {
     <>
       {/* A card open takes a column of the page for its drawer, and the head of the page is part of the page: its
           actions stand left of the drawer rather than under it. */}
-      <div className={inspected ? "xl:pr-96" : undefined}>
+      <div className={inspected ? "lg:pr-96" : undefined}>
         <PageHeader
           title={board.repository.name}
           actions={
@@ -204,7 +204,7 @@ export function BoardPage() {
       </div>
       {/* The dock stands beside the whole of the board, not beside its lanes: it belongs to the page, and starting it
           under the filters spent the room it asks for and left the filters standing alone over nothing. */}
-      <div className="flex min-w-0 flex-col gap-4 xl:flex-row xl:items-start">
+      <div className="flex min-w-0 flex-col gap-4 lg:flex-row lg:items-start">
         <div className="flex min-w-0 flex-1 flex-col">
           <FilterBar
             repositories={data.data.boards.map((b) => b.repository)}
@@ -249,9 +249,11 @@ export function BoardPage() {
         {inspected && (
           // The column holds the drawer's width so the board keeps the room it has; the drawer itself runs the whole
           // height of the window and is flush to its top, right and bottom edges — it is the page's own card inspector
-          // rather than a sheet laid over it — and scrolls its sections rather than the page scrolling them.
-          <div className="w-full shrink-0 xl:w-96">
-            <div className="xl:fixed xl:inset-y-0 xl:right-0 xl:w-96">
+          // rather than a sheet laid over it — and scrolls its sections rather than the page scrolling them. It is a
+          // drawer as long as two of the board's columns still fit beside it, which `lg` is the width for; under that
+          // there is no board left to look at through a fixed panel, so the dock takes the row under the columns.
+          <div className="w-full shrink-0 lg:w-96">
+            <div className="lg:fixed lg:inset-y-0 lg:right-0 lg:w-96">
               <Dock
                 key={inspected.id}
                 board={board}
