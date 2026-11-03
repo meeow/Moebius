@@ -671,6 +671,41 @@ describe("the floating chat", () => {
     expect(String(fake().started[0]?.context)).toContain("Repository: demo (id 1)");
   });
 
+  /**
+   * The agent of the floating chat going away is not the end of the conversation: the sheet says so in the words the
+   * Chat page uses, and the next message goes back to that chat instead of opening a second one nobody asked for.
+   */
+  it.skipIf(usesRealServer)(
+    "takes a chat whose agent went away up again instead of starting a new one",
+    async () => {
+      await open("/inbox");
+      await page.getByRole("button", { name: "Open the floating chat" }).click();
+      const window = page.getByRole("dialog", { name: "Floating chat" });
+      const field = window.getByRole("textbox", { name: "Message" });
+      await field.fill("First question");
+      await field.press("Enter");
+      await window.getByText("You said: First question").first().waitFor();
+      const run = fake().chats[0]?.id as number;
+
+      const stopped = await context.request.post(`${server.url}/v1/chats/${run}/stop`, {
+        headers: { "X-Moebius": "1" },
+      });
+      expect(stopped.ok(), await stopped.text()).toBe(true);
+      await window.getByText("Agent disconnected", { exact: true }).first().waitFor();
+
+      await field.fill("Carry on");
+      await field.press("Enter");
+      await window.getByText("You said: Carry on").first().waitFor();
+
+      expect(fake().started).toHaveLength(1);
+      expect(fake().chats).toHaveLength(1);
+      expect(fake().said.at(-1)?.body.message).toBe("Carry on");
+      expect(fake().chats[0]?.status).toBe("waiting");
+      // The sheet no longer says the agent is gone: it answered.
+      await window.getByText("Agent disconnected", { exact: true }).waitFor({ state: "detached" });
+    },
+  );
+
   it("opens in the real server too, with the page's text", async () => {
     await open("/inbox");
     await page.getByRole("button", { name: "Open the floating chat" }).click();

@@ -5,7 +5,8 @@
  * that opened it. Minimising turns it back into the button and the chat stays across pages. Every message carries
  * where the person is, which only the agent is told; the first one starts a chat of origin `assistant` (the Chat page
  * leaves it out of its list), in the repository of the page when it has one, and the later ones go to the same chat.
- * A chat that ended is left behind: the next message starts a new one.
+ * A chat whose agent went away is taken up again with what was said in it, as on the Chat page; one the agent ended
+ * is left behind, and the next message starts a new conversation.
  */
 import { ArrowSquareOutIcon, ChatCircleDotsIcon, MinusIcon, PlusIcon } from "@phosphor-icons/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -14,9 +15,10 @@ import { Link, useLocation } from "react-router";
 import { snapshot as readSnapshot } from "../api/calls/board";
 import { chats as readChats, say, startChat } from "../api/calls/chat";
 import { keys } from "../api/keys";
+import { Tag } from "../ui/chat/Tag";
 import { Button } from "../ui/components/Button";
 import { Composer } from "./Composer";
-import { isOpen, isWorking } from "./format";
+import { isOpen, isWorking, statusTag, takesMessage } from "./format";
 import { pageContext } from "./pageContext";
 import { Starters } from "./Starters";
 import { ThreadView } from "./ThreadView";
@@ -51,11 +53,16 @@ export function FloatingChat() {
   const chat = chats.data?.find((each) => each.id === chatId);
   // A chat that was just started is not in the list yet, so while its record is on the way the message still goes to
   // it rather than opening a second chat.
-  const going = chat ? isOpen(chat.status) : chatId !== null;
+  const writesHere = chat ? takesMessage(chat.status) : chatId !== null;
+  // Whether the agent is still up: a message to a chat whose agent went away starts that agent again on the same chat.
+  const up = chat !== undefined && isOpen(chat.status);
   // Where the person is now: sent with every message, and said under the sheet's own name, because the page behind it
   // is partly covered and is the thing being asked about.
   const where = pageContext(location.pathname, snapshot.data);
   const working = chat !== undefined && isWorking(chat.status);
+  // The same words the Chat page uses for the state of the chat, so the sheet does not look alive when its agent is
+  // gone: the next message takes the chat up again rather than starting a new one.
+  const tag = chat ? statusTag(chat.status, chat.asks) : null;
 
   // Escape closes the sheet wherever the focus is on the page. Once it closes, the focus goes back to the button that
   // opened it, so a keyboard does not lose its place.
@@ -84,8 +91,11 @@ export function FloatingChat() {
     setError(null);
     setSent((n) => n + 1);
     try {
-      if (chatId !== null && going) {
+      if (chatId !== null && writesHere) {
         await say(chatId, text, where.text);
+        // Taking a chat up again says something new in its tag and in the list of chats, so both are read again
+        // instead of waiting for the events to say so.
+        if (!up) await queryClient.invalidateQueries({ queryKey: keys.chats });
       } else {
         const run = await startChat({
           agent: FLOATING_AGENT,
@@ -128,9 +138,12 @@ export function FloatingChat() {
     >
       <header className="flex items-center gap-2">
         <div className="min-w-0 flex-1 px-2">
-          <h2 className="m-0 min-w-0 break-words text-base font-semibold text-text">
-            Moebius agent
-          </h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="m-0 min-w-0 break-words text-base font-semibold text-text">
+              Moebius agent
+            </h2>
+            {tag && <Tag tone={tag.tone}>{tag.label}</Tag>}
+          </div>
           <p className="m-0 min-w-0 break-words text-xs text-secondary">viewing {where.name}</p>
         </div>
         {/* Both belong to a conversation that exists: nothing is left behind, and nowhere else to open, when this is
